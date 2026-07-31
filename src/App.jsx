@@ -766,7 +766,7 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
                     opacity: closed ? 0.35 : 1, flexShrink: 0,
                   }}>
                   <div style={{ fontSize: 10, color: SMOKE, textTransform: "uppercase" }}>{DIAS[date.getDay()].slice(0, 3)}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{date.getDate()}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: active ? GOLD : BONE }}>{date.getDate()}</div>
                 </button>
               );
             })}
