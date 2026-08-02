@@ -205,8 +205,19 @@ function clearAdminSession() {
   try { window.sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch { /* nada que limpiar */ }
 }
 
-async function apiGet(path) {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+async function apiGet(path, { auth = false } = {}) {
+  const headers = { Accept: "application/json" };
+  if (auth) {
+    const session = readAdminSession();
+    if (!session) {
+      const err = new Error("Tu sesión ha caducado. Vuelve a entrar con tu clave.");
+      err.reason = "unauthorized";
+      err.status = 401;
+      throw err;
+    }
+    headers.Authorization = `Bearer ${session.token}`;
+  }
+  const res = await fetch(path, { headers });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body || body.ok === false) {
     const err = new Error((body && body.message) || `Error ${res.status}`);
@@ -398,7 +409,10 @@ export default function FelixBarberiaApp() {
   const [festivos, setFestivosState] = useState(initialFestivos);
   const [vacationRanges, setVacationRangesState] = useState(initialVacationRanges);
   const [portfolio, setPortfolioState] = useState(DEFAULT_PORTFOLIO);
-  const [waitlist, setWaitlistState] = useState(DEFAULT_WAITLIST);
+  // La lista de espera y las citas con nombre y teléfono ya NO vienen en la
+  // carga pública: las trae /api/admin-data cuando Félix entra en su panel.
+  const [waitlist, setWaitlistState] = useState([]);
+  const [adminAppointments, setAdminAppointments] = useState([]);
   const [schedule, setScheduleState] = useState(DEFAULT_SCHEDULE);
   // Reservas temporales vivas: las horas que alguien está rellenando ahora
   // mismo. Se restan de la disponibilidad, igual que una cita.
@@ -419,7 +433,6 @@ export default function FelixBarberiaApp() {
         setBlockedDaysState(d.blockedDays);
         setFestivosState(d.festivos);
         setVacationRangesState(d.vacationRanges);
-        setWaitlistState(d.waitlist);
         setScheduleState(d.schedule);
         setHoldsState(d.holds || []);
         setLoadError(null);
@@ -493,26 +506,49 @@ export default function FelixBarberiaApp() {
   // almacenamiento de ficheros, no una columna de texto. Petición aparte.
   function setPortfolio(next) { setPortfolioState(next); }
 
+  // Los datos que solo ve el panel: citas con nombre y teléfono, y la lista de
+  // espera. Van por su propia ruta, que exige la clave. Si la sesión ya no
+  // vale, se vuelve a pedir en vez de dejar el panel a medias.
+  async function loadAdminData() {
+    try {
+      const d = await apiGet("/api/admin-data", { auth: true });
+      setAdminAppointments(d.appointments);
+      setWaitlistState(d.waitlist);
+      return d.appointments;
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) {
+        clearAdminSession();
+        setAdminEpoch((n) => n + 1);
+        return [];
+      }
+      throw e;
+    }
+  }
+
   // Crea una cita. Devuelve la cita creada, o lanza un error con un mensaje
   // que se puede enseñar tal cual.
   async function createAppointment(data) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     const body = await apiSend("/api/appointments", "POST", data);
-    setAppointmentsState((prev) => [...prev.filter((a) => a.id !== body.appointment.id), body.appointment]);
-    return body.appointment;
+    // Al estado público solo va el BLOQUE: cuándo empieza y cuánto dura. La
+    // cita entera se la queda quien la ha reservado, en confirmedAppt.
+    const a = body.appointment;
+    setAppointmentsState((prev) => [...prev, { dateKey: a.dateKey, time: a.time, barberId: a.barberId, duration: a.duration }]);
+    return a;
   }
 
   // Cancela. No borra: marca. Así queda el rastro de que la cita existió.
+  // No se toca el estado a mano: se relee, porque lo que hay en memoria son
+  // bloques sin id y no habría por dónde encontrar el que sobra.
   async function cancelAppointment(id) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     await apiSend("/api/appointments", "PATCH", { id, status: "cancelled" });
-    setAppointmentsState((prev) => prev.filter((a) => a.id !== id));
+    await refreshAppointments();
   }
 
   async function setAppointmentNoShow(id, value) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     const body = await apiSend("/api/appointments", "PATCH", { id, status: value ? "no_show" : "booked" });
-    setAppointmentsState((prev) => prev.map((a) => (a.id === id ? body.appointment : a)));
     return body.appointment;
   }
 
@@ -604,7 +640,9 @@ export default function FelixBarberiaApp() {
         {view === "misCitas" && <MisCitas {...shared} />}
         {view === "contacto" && <Contacto schedule={schedule} />}
         {view === "galeria" && <Galeria portfolio={portfolio} barbers={barbers} />}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} />}
+        {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
+            sustituyen a las públicas, que ya no llevan datos de nadie. */}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -1472,20 +1510,35 @@ function Row({ label, value }) {
 
 /* ===================== MIS CITAS ===================== */
 
-function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppointments, cancelAppointment }) {
+// Ya no recibe la agenda: la pide al servidor por teléfono. Ésa es la razón
+// de ser de esta pantalla desde este cambio.
+function MisCitas({ services, barbers, cancelAppointment }) {
   const [phone, setPhone] = useState("");
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cancelledIds, setCancelledIds] = useState({});
+  const [error, setError] = useState(null);
 
+  // Ahora pregunta el servidor y devuelve SOLO las de este teléfono. Antes se
+  // descargaba la agenda entera y filtraba aquí — y por coincidencia parcial,
+  // así que escribiendo un "6" salían las de todo el mundo.
   async function buscar() {
+    if (!isPhoneValid(phone)) {
+      setError("Escribe tu teléfono completo, con sus 9 dígitos.");
+      return;
+    }
     setLoading(true);
-    const latest = await refreshAppointments();
-    const found = latest.filter((a) => a.phone.replace(/\s/g, "").includes(phone.replace(/\s/g, ""))).sort((a, b) => (a.dateKey + a.time > b.dateKey + b.time ? 1 : -1));
-    setResults(found);
-    setSearched(true);
-    setLoading(false);
+    setError(null);
+    try {
+      const body = await apiSend("/api/my-appointments", "POST", { phone });
+      setResults(body.appointments);
+      setSearched(true);
+    } catch (e) {
+      setError(e.message || "No se han podido consultar tus citas. Inténtalo otra vez.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function cancelarCita(appt) {
@@ -1501,7 +1554,7 @@ function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppoi
       sendNotification(
         BARBER_EMAIL,
         "Un cliente canceló su cita",
-        `${appt.name} ha cancelado su cita del ${appt.dateKey} a las ${appt.time} (${svc?.name || appt.service}).\nTeléfono: ${appt.phone}`
+        `${appt.name} ha cancelado su cita del ${appt.dateKey} a las ${appt.time} (${svc?.name || appt.service}).\nTeléfono: ${phone}`
       );
     }
   }
@@ -1520,10 +1573,11 @@ function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppoi
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px" }}>
           <Phone size={15} color={GOLD} />
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} onKeyDown={(e) => e.key === "Enter" && buscar()} placeholder="612 345 678" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
+          <input value={phone} onChange={(e) => { setPhone(sanitizePhoneInput(e.target.value)); setError(null); }} inputMode="tel" autoComplete="tel" onKeyDown={(e) => e.key === "Enter" && buscar()} placeholder="612 345 678" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
         </div>
-        <button onClick={buscar} disabled={!phone || loading} className="gold-btn" style={{ padding: "0 18px", borderRadius: 10, fontWeight: 700, fontSize: 13 }}>{loading ? "…" : "Buscar"}</button>
+        <button onClick={buscar} disabled={!isPhoneValid(phone) || loading} className="gold-btn" style={{ padding: "0 18px", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: isPhoneValid(phone) && !loading ? "pointer" : "not-allowed", opacity: isPhoneValid(phone) && !loading ? 1 : 0.5 }}>{loading ? "…" : "Buscar"}</button>
       </div>
+      {error && <div style={{ color: "#f2a6a6", fontSize: 12, marginTop: -10, marginBottom: 14 }}>{error}</div>}
 
       {searched && (
         results.length === 0 ? (
@@ -1547,7 +1601,7 @@ function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppoi
                     <>
                       <div style={{ fontSize: 12, color: SMOKE, marginTop: 10, marginBottom: 8 }}>Cita cancelada. Avisa al barbero por WhatsApp:</div>
                       <a
-                        href={buildCancelWhatsAppLink({ name: a.name, phone: a.phone, serviceName: s?.name || a.service, dateLabel: a.dateKey, time: a.time })}
+                        href={buildCancelWhatsAppLink({ name: a.name, phone, serviceName: s?.name || a.service, dateLabel: a.dateKey, time: a.time })}
                         target="_blank" rel="noopener noreferrer"
                         className="gold-btn"
                         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: 10, borderRadius: 10, fontWeight: 700, fontSize: 12.5, textDecoration: "none" }}
@@ -1726,6 +1780,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       return;
     }
     setSelectedAppt(null);
+    // El panel tiene su propia copia de las citas: hay que releerla, la
+    // pública no le sirve.
+    await refreshAppointments();
     if (appt && appt.email) {
       const svc = services.find((s) => s.id === appt.service);
       sendNotification(
@@ -1741,6 +1798,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     try {
       const updated = await setAppointmentNoShow(id, !(current && current.noShow));
       setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
+      await refreshAppointments();
     } catch (e) {
       window.alert(`No se ha podido guardar: ${e.message}`);
     }
@@ -1767,6 +1825,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       return;
     }
     setShowAdd(false);
+    // La cita se ha creado, pero createAppointment solo mete el bloque en el
+    // estado público. El panel necesita la fila entera: se relee.
+    await refreshAppointments();
   }
 
   function blockRange(data) {

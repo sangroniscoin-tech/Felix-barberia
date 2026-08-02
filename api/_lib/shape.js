@@ -30,6 +30,48 @@ export function appointmentOut(r) {
   return out;
 }
 
+// Una cita tal y como puede verla CUALQUIERA: cuándo empieza, cuánto dura y
+// con qué barbero. Ni nombre, ni teléfono, ni correo, ni id.
+//
+// Sin id a propósito: cancelar una cita solo pide el id, así que un id público
+// es una cita que cualquiera puede cancelar. Para pintar huecos libres no hace
+// falta saber de quién es cada cita.
+export function busyBlockOut(r, durationMinutes) {
+  return {
+    dateKey: r.appointment_date,
+    time: String(r.start_time).slice(0, 5),
+    barberId: r.barber_id,
+    duration: durationMinutes,
+  };
+}
+
+// Una cita tal y como se la devolvemos a quien ha demostrado saber el teléfono
+// entero. Lleva el id, porque con él se cancela, y el nombre, para que se
+// reconozca. No lleva el teléfono ni el correo: quien pregunta ya sabe el
+// teléfono, y devolvérselo solo sirve para confirmarle a alguien que ese
+// número tiene citas.
+export function myAppointmentOut(r, durationMinutes) {
+  return {
+    id: r.id,
+    dateKey: r.appointment_date,
+    time: String(r.start_time).slice(0, 5),
+    service: r.service_id,
+    barberId: r.barber_id,
+    name: r.customer_name,
+    duration: durationMinutes,
+    price: r.price != null ? Number(r.price) : null,
+  };
+}
+
+// Las dos filas migradas antiguas no guardan duración. No se inventa: se toma
+// la que vale hoy el servicio. Un bloque sin duración pintaría como libre un
+// hueco ocupado.
+export function durationOf(row, serviceDurations) {
+  return row.duration_minutes != null
+    ? row.duration_minutes
+    : (serviceDurations[row.service_id] ?? 30);
+}
+
 export function scheduleOut(rows) {
   const byDay = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
   for (const r of rows) {
