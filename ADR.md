@@ -15,10 +15,16 @@ endorsement.
   on the server. Never import it from `src/` — a Vite SPA ships everything it reads.
 - RLS is on with no policies and no grants to `anon`/`authenticated`. Anything that wants
   the browser to reach Postgres directly breaks this and needs a rethink, not a workaround.
-- **The admin panel is not protected.** Its password is a constant in `src/App.jsx`, in a
-  public repository and in the shipped bundle, and `/api/admin` asks for nothing. Changing
-  the value fixes none of it; moving the check to the server does, and now that a server
-  exists that is finally possible. Its own issue.
+- **The admin panel's password lives only in `ADMIN_PASSWORD` on Vercel.** `api/_lib/
+  adminAuth.js` is the single place it is read, like `_lib/supabase.js` for the database
+  key. `/api/admin` requires a signed, expiring bearer token on **every** write, checked
+  before the body is parsed. The signing key is derived from the password itself, so there
+  is no second secret to configure and rotating the password invalidates every open
+  session. A missing variable **fails closed** — never open-by-default on half a config.
+- **Customer names and phones are still served to anyone**: `/api/bootstrap` returns whole
+  appointment rows, unauthenticated, because the browser filters "Mis citas" client-side.
+  Verified against production on 2026-08-02. This is the next issue; the entry above is
+  its prerequisite, since the panel needs a closed door to be served those rows from.
 - Two appointments for one barber cannot overlap: a Postgres exclusion constraint
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
