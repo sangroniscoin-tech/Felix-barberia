@@ -50,8 +50,13 @@ endorsement.
 - CI is the merge gate, and it runs `npm run build` only. **Green means it compiles, not
   that it works.** There are no tests, no linter and no formatter to add to it.
 - Deployment is Vercel's native Git integration, not an Action: an Action would need a
-  token to do what the integration does with no credentials at all. Merging to `main`
-  publishes immediately; there is no staging.
+  token to do what the integration does with no credentials at all. There is no staging —
+  whatever is on `main` is what customers get.
+- **That merging to `main` publishes has not actually been observed.** Adoption's merge
+  produced no Vercel deployment, most likely because the output was identical to the
+  preview already built. Preview deploys on PRs are confirmed; production is not. The
+  next change that alters the bundle settles it — see `CLAUDE.md`. Until then, no merge
+  is finished until the live bundle filename has been checked by hand.
 - `/next` is the default way of working, not a command. Nobody should need to know it
   exists.
 - Every PR closes its issue, and the issue's label is its stage. Auto-close doesn't

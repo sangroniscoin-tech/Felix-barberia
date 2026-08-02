@@ -110,10 +110,29 @@ Browser (React SPA, all logic client-side)
 Vercel's **native Git integration**. No `VERCEL_TOKEN` and no deploy secret in the
 repository.
 
-| Event | Result |
-| --- | --- |
-| PR against `main` | preview deploy + CI check |
-| Merge to `main` | production deploy |
+| Event | Result | Verified? |
+| --- | --- | --- |
+| PR against `main` | preview deploy + CI check | **Yes** — observed during adoption |
+| Merge to `main` | production deploy | **Not yet** — see below |
+
+**The production deploy trigger is unconfirmed.** Adoption's own merge to `main`
+(`c36ea95`) produced no Vercel deployment at all in the eight minutes that followed. The
+likeliest explanation is that the build output was byte-identical to the preview Vercel
+had already built, so it had nothing to publish — adoption changed no application code.
+But that is a guess, and the alternative is that merging to `main` does not publish.
+
+So: **the first change that actually alters the built output must be watched all the way
+to production**, not assumed. Compare the bundle filename the live site serves against the
+one the build produces:
+
+```bash
+curl -fsS https://felix-barberia.vercel.app/ | grep -oE '/assets/[^"]+\.js'
+```
+
+If it does not change after a merge that changed the code, the Git integration is not
+publishing `main` and that has to be fixed in the Vercel dashboard before anything else
+ships. Once a merge is confirmed to publish, delete this warning and the "Verified?"
+column.
 
 The only Action is `.github/workflows/ci.yml` — `npm install` then `npm run build`, on
 every PR and every push to `main`. It is `/next`'s gate: an agent saying "it builds" is a
