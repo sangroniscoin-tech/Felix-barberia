@@ -20,6 +20,8 @@ export function appointmentOut(r) {
     name: r.customer_name,
     phone: r.customer_phone,
     email: r.customer_email,
+    // El panel de Félix trabaja con un booleano; la base guarda un estado.
+    noShow: r.status === "no_show",
   };
   // Las dos filas antiguas no guardaban duración ni precio. No se inventan
   // al cargar: se rellenan aquí con lo que vale el servicio hoy.

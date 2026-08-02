@@ -4,9 +4,10 @@ Context for working on this repository from Claude Code. Changes are asked for i
 opened as a PR and merged to `main`, which is what triggers deployment.
 
 This project was **adopted**, not scaffolded by this method. Everything below describes
-what it actually runs on today — a React SPA on Vercel with a Google Apps Script Web App
-in front of a Google Sheet — not the method's greenfield stack. Nothing here is
-aspirational: if a section says the app does something, the app does it.
+what it actually runs on today — a React SPA on Vercel, with Vercel Functions in front of
+Supabase. It started on a Google Apps Script Web App over a Google Sheet; that was migrated
+on 2026-08-02. Nothing here is aspirational: if a section says the app does something, the
+app does it.
 
 ## Where memory lives
 
@@ -69,70 +70,69 @@ and never committed.
 | --- | --- | --- |
 | **GitHub** | `sangroniscoin-tech/Felix-barberia`, **public**, default branch `main` | `mcp__github__*` tools |
 | **Vercel** | project `felix-barberia`, id **`prj_GevdvSRTvEI8xW4vmUQKBrFkx7at`**, team **`team_qYwi8BkG4rFi0bjpCfDY6s2D`** | `mcp__Vercel__*`, passing `teamId` |
-| **Google** | one Apps Script Web App over one Google Sheet, in Félix's own Google account | **No connector, no MCP server.** Dashboard only — every change there is a hand-over procedure |
+| **Supabase** | project `sangroniscoin-tech's Project`, ref **`ozosjyulagynyxhnvyxr`**, region `eu-west-1`, org `Félix barbería` | `mcp__Supabase__*`, passing that `project_id` |
+| **Google** | one Apps Script Web App, and the **frozen** Sheet that is the migration's rollback | **No connector for Apps Script.** Dashboard only |
 
 - Production: **https://felix-barberia.vercel.app**
 - There is **no custom domain**, so there is no registrar, no DNS zone and no mail records
   to carry across. Confirm this is still true before proposing anything that touches DNS.
-- There is no Supabase project and no other database. Do not add one without an issue.
+- Supabase API: `https://ozosjyulagynyxhnvyxr.supabase.co`
+- The org holds exactly one project. Confirm the ref before applying any migration.
 
 ## Architecture
 
 ```
-Browser (React SPA, all logic client-side)
+Browser (React SPA)  ──fetch /api/*──►  Vercel Functions  ──service_role──►  Supabase
+(no credentials)                        (api/, server-side)                  (RLS on, no policies)
    │
-   ├── fetch GET  ?key=…            ─┐
-   ├── fetch POST {key,value}        ├─► Apps Script Web App ──► Google Sheet
-   └── fetch POST {action:"notify"}  ─┘   (public, unauthenticated)   (key/value rows)
-                                              │
-                                              └──► Gmail, for cancellation notices
+   └── fetch POST {action:"notify"} ──► Apps Script ──► Gmail   (only for the email notice)
 ```
 
-- `src/App.jsx` — **the entire application**, ~2000 lines: UI, booking rules, admin panel,
-  data access. There is no backend of this project's own and no router.
+- `api/` — the server. `_lib/supabase.js` is the **only** place credentials are read; it
+  never enters the browser bundle. `bootstrap.js` (everything the app needs on load),
+  `appointments.js` (create/cancel), `admin.js` (config), `health.js` (mandate zero).
+- Every table has RLS **on with no policies** and no grants to `anon`/`authenticated`, so
+  the publishable key grants nothing. All access goes through the server.
+- **Two appointments can no longer overlap**: an exclusion constraint on `appointments`
+  enforces it in Postgres. Don't reintroduce a read-then-write availability check as the
+  guarantee — that is the pattern that lost bookings before.
+- Validation and sanitising happen **in `api/`**, always, even though the browser also
+  validates. The browser's version is a convenience and can be bypassed.
+- **Google Sheets is no longer the data store.** The sheet
+  (`1p-ew-zrLBYLLoxTS2VOf2O2_dqq1wUCGQ68epznJvn4`) is frozen as the migration's rollback
+  and holds data as of 2026-08-02. Do not write to it, do not delete it.
+
+- `src/App.jsx` — **the entire client**, ~2000 lines: UI, booking rules, admin panel. No
+  router.
 - `src/main.jsx` — mounts it. That is the whole entrypoint.
 - `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` — **dead copies** of an older
   `App.jsx`. Nothing imports them. Do not edit them; do not treat them as a second source
   of truth.
-- `loadShared` / `saveShared` in `src/App.jsx` are the only data access. The Apps Script
-  URL is a constant at the top of the same file.
-- Data is stored as **whole JSON blobs under fixed keys** — `felix-appointments`,
-  `felix-services`, `felix-barbers`, `felix-schedule`, `felix-blocked-ranges`,
-  `felix-blocked-days`, `felix-festivos`, `felix-vacation-ranges`, `felix-portfolio`,
-  `felix-waitlist`. A save rewrites the whole blob, so two people saving at once means the
-  last one wins and the other's change is gone. Assume that when changing anything that
-  writes.
-- `window.storage` is referenced as a fallback. It does not exist in a browser and is
-  never available in production. Treat it as dead.
+- `apiGet` / `apiSend` in `src/App.jsx` are the only data access, and they only ever talk
+  to same-origin `/api/*`. Unlike what they replaced, they do **not** swallow errors.
+- Tables: `appointments`, `services`, `barbers`, `schedule_ranges`, `blocked_days`,
+  `blocked_ranges`, `festivos`, `vacation_ranges`, `waitlist`, `app_meta`. One row per
+  thing — the old whole-JSON-blob model, and its last-write-wins data loss, is gone.
+- The gallery still reads four hotlinked photos from the code. Storing uploads needs file
+  storage, not a text column; it is a separate issue.
 
 ## Deployment
 
 Vercel's **native Git integration**. No `VERCEL_TOKEN` and no deploy secret in the
 repository.
 
-| Event | Result | Verified? |
-| --- | --- | --- |
-| PR against `main` | preview deploy + CI check | **Yes** — observed during adoption |
-| Merge to `main` | production deploy | **Not yet** — see below |
+| Event | Result |
+| --- | --- |
+| PR against `main` | preview deploy + CI check |
+| Merge to `main` | production deploy, live in about 20 seconds |
 
-**The production deploy trigger is unconfirmed.** Adoption's own merge to `main`
-(`c36ea95`) produced no Vercel deployment at all in the eight minutes that followed. The
-likeliest explanation is that the build output was byte-identical to the preview Vercel
-had already built, so it had nothing to publish — adoption changed no application code.
-But that is a guess, and the alternative is that merging to `main` does not publish.
+Both confirmed by observation on 2026-08-02. An earlier merge produced no deployment
+because its build output was byte-identical to a preview Vercel had already built — it had
+nothing to publish, which is the expected behaviour, not a fault.
 
-So: **the first change that actually alters the built output must be watched all the way
-to production**, not assumed. Compare the bundle filename the live site serves against the
-one the build produces:
-
-```bash
-curl -fsS https://felix-barberia.vercel.app/ | grep -oE '/assets/[^"]+\.js'
-```
-
-If it does not change after a merge that changed the code, the Git integration is not
-publishing `main` and that has to be fixed in the Vercel dashboard before anything else
-ships. Once a merge is confirmed to publish, delete this warning and the "Verified?"
-column.
+**Preview deployments are behind Vercel's SSO**, so they cannot be curl'd from a session.
+Anything that needs verifying against a real deploy has to go to production — which is why
+server changes ship before the client is pointed at them.
 
 The only Action is `.github/workflows/ci.yml` — `npm install` then `npm run build`, on
 every PR and every push to `main`. It is `/next`'s gate: an agent saying "it builds" is a
@@ -143,13 +143,21 @@ linter and no formatter in this project — see `ADR.md`.
 
 ## Environment variables
 
-**There are none.** Not in Vercel, not in GitHub, not in a `.env`. Every value the app
-needs — the Apps Script URL, the WhatsApp number, the shop address, the admin password —
-is a literal constant at the top of `src/App.jsx`, and therefore public.
+They live **only in Vercel**: project `felix-barberia` → Settings → Environment Variables.
+Not in the repository, not in GitHub secrets. Set by hand — the connector reads them but
+cannot write them.
 
-If a change ever needs a real secret, that secret cannot live in this app as it is built
-today: a Vite SPA ships everything it reads to the browser. It needs a server first, which
-is a project, not a fix.
+| Variable | Source |
+| --- | --- |
+| `SUPABASE_URL` | `https://ozosjyulagynyxhnvyxr.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API Keys → `service_role` |
+
+They are read **only** by `api/_lib/supabase.js`, which runs on the server. Never add a
+credential to `src/` — a Vite SPA ships everything it reads to the browser.
+
+Still public constants at the top of `src/App.jsx`, because they always were: the WhatsApp
+number, the shop address, the Apps Script URL for email, and **the admin password** — which
+means the admin panel is not actually protected. See `ADR.md`.
 
 ## What the connectors can't do
 
@@ -170,7 +178,8 @@ deployment unreachable — `curl` to the site still works for checking state.
 
 | Service | Reached via | Still a human step |
 | --- | --- | --- |
-| Google Apps Script + Google Sheet | plain `fetch` from the browser | everything: editing, redeploying, restoring |
+| Supabase (Postgres) | `api/` on the server, and `mcp__Supabase__*` | nothing |
+| Google Apps Script | `fetch` from the browser, **email notices only** | editing and redeploying it |
 | Gmail (cancellation notices) | `MailApp` inside that same Apps Script | the barber's notification address is `BARBER_EMAIL` in `src/App.jsx`, and is **empty**, so barber-side notices do not send |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
@@ -190,19 +199,22 @@ one that matters: the first only proves Vercel served a page.
 # 1. The site is up and is this app
 curl -fsS https://felix-barberia.vercel.app/ | grep -q "Félix Barbería" && echo "web OK"
 
-# 2. The data store answers with real data — this is the check that can actually fail
-API=$(grep -oE 'https://script\.google\.com/macros/s/[^"]+' src/App.jsx | head -1)
-curl -fsSL "$API?key=felix-services" | grep -q "Corte de pelo" && echo "datos OK"
+# 2. The server can reach the database — this is the check that can actually fail
+curl -fsS https://felix-barberia.vercel.app/api/health   # {"ok":true,"schema_version":"1"}
+
+# 3. Real data comes back through the API
+curl -fsS https://felix-barberia.vercel.app/api/bootstrap | grep -q "Corte de pelo" && echo "datos OK"
 ```
 
-Expected: `web OK` then `datos OK`. Anything else is a red production — stop and report.
+Expected: `web OK`, then `{"ok":true,…}`, then `datos OK`. Anything else is a red
+production — stop and report.
 
-If the second command prints nothing, the site will still load and look normal while
-silently falling back to the sample data in `src/App.jsx`. **A page that looks fine is not
-proof.** That is exactly why the check reads the data store directly.
+`/api/health` separates **`not_configured`** (the Vercel environment variables are missing)
+from **`database_unreachable`** (Supabase isn't answering). Those need different fixes.
 
-Only ever `GET` against that URL when checking health. A `POST` writes to the real
-booking data.
+The app no longer silently falls back to sample data — a failed load shows a red banner
+telling customers not to book. But check the data anyway: a page that looks fine has never
+been proof of anything here.
 
 ## Local development
 
@@ -221,7 +233,14 @@ npm run dev
 
 ## Data
 
-No schema and no migrations. The Google Sheet holds one row per key, with a JSON string in
-the value. Changing the shape of any blob means every already-stored copy is in the old
-shape — the app must keep reading both, or the data has to be rewritten deliberately,
-which is the `migrate` skill's job and never a side effect of a feature.
+Schema changes ship with `mcp__Supabase__apply_migration` on `project_id:
+ozosjyulagynyxhnvyxr`, never `execute_sql`, so they are recorded as migrations.
+
+**Never put customer data in a migration.** The 33 rows migrated from Sheets were loaded
+with `execute_sql` on purpose: migrations get copied into backups and checkouts, and names
+and phone numbers should not travel with them.
+
+Every migrated row keeps `raw_name`, `raw_phone`, `raw_email` and `source` — exactly what
+the sheet said before normalising. That is what answers "where did this come from?" later.
+`is_sample_data` marks the two fabricated rows that came from the code's demo data; they
+are in the table but never served.

@@ -5,6 +5,10 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # GitHub no siempre dispara el evento de pull_request: pasó en la PR #5, que
+  # se quedó sin check ni reabriéndola. Sin esto no había forma de lanzarlo, y
+  # el método no fusiona sin check verde.
+  workflow_dispatch:
 
 jobs:
   build:

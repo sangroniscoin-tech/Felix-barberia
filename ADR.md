@@ -10,53 +10,57 @@ endorsement.
 
 **The application**
 
-- The browser is the whole application. A React + Vite SPA with no server of its own, so
-  anything it can read, every visitor can read. There is nowhere to put a secret until
-  this app has a server, which is a project rather than a fix.
-- The admin password is a constant in `src/App.jsx`, in a public repository, and shipped
-  in the JavaScript bundle. The admin panel is therefore unprotected in practice — the
-  code itself says so in a comment. Changing the value does not fix it; only moving the
-  check off the browser does.
-- The data store is a Google Apps Script Web App deployed with access "anyone",
-  reachable at a URL that is in the public repository and in the shipped bundle. It
-  takes reads and writes from anyone who has it, with no key. Customer names and phone
-  numbers are behind it. This is the single largest constraint on this project and it
-  bounds every feature that touches personal data.
-- Writes replace a whole JSON blob under one key. There is no per-record write and no
-  locking, so two people saving at the same moment means one change silently disappears.
-  Anything assuming a write is safe is wrong.
+- The browser holds **no database credentials**. It talks only to same-origin `/api/*`;
+  `api/_lib/supabase.js` is the single place the `service_role` key is read, and it runs
+  on the server. Never import it from `src/` — a Vite SPA ships everything it reads.
+- RLS is on with no policies and no grants to `anon`/`authenticated`. Anything that wants
+  the browser to reach Postgres directly breaks this and needs a rethink, not a workaround.
+- **The admin panel is not protected.** Its password is a constant in `src/App.jsx`, in a
+  public repository and in the shipped bundle, and `/api/admin` asks for nothing. Changing
+  the value fixes none of it; moving the check to the server does, and now that a server
+  exists that is finally possible. Its own issue.
+- Two appointments for one barber cannot overlap: a Postgres exclusion constraint
+  enforces it. The old guarantee was a read-then-write check in the browser, which is
+  what silently lost a booking when two people reserved in the same second. Never make
+  an availability check the guarantee again — it can only be a courtesy on top.
 - There is no login and no user accounts. A customer is identified by the name and phone
   they type. "Mis citas" is a lookup, not a session.
-- `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` are stale copies of
-  `App.jsx` that nothing imports. Editing them changes nothing that ships.
+- `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` are stale copies nothing
+  imports. Editing them changes nothing that ships.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
-- Google Apps Script is the backend and no agent can reach it. Every change to how data
-  is stored or to the cancellation emails is a click-by-click procedure for the client.
+- Apps Script survives **only** to send the email notice, and no agent can reach it: any
+  change there is a click-by-click procedure for the client.
+- The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
+  It was found **in the trash** during the migration; restoring it is the only reason the
+  data survived. Never write to it, never delete it, never let it be trashed again.
+- Migrated rows keep `raw_name`, `raw_phone`, `raw_email` and `source`. Customer data is
+  never put in a recorded migration — migrations travel into backups and checkouts.
 - `BARBER_EMAIL` is empty, so the barber-side cancellation notice never sends. The code
   path exists and looks like it works.
 - Four gallery photos are hotlinked from Unsplash. The app depends on somebody else's
   URLs staying up.
-- There is no `package-lock.json`, so CI and Vercel each resolve dependency versions
-  fresh. A build that passed yesterday can fail today with no commit in between.
+- `package-lock.json` is committed, so CI and Vercel build the same versions. Adding it
+  changed no output: the bundle hash was identical before and after.
 
 **Getting to production**
 
 - Production staying up outranks every other instruction. Checked before a merge and
   again after the deploy; an already-broken production stops the merge. Nothing reverts
   or redeploys automatically — an agent reports and waits.
-- The health check must read the data store, not just the page. If Apps Script is down
-  the site still renders normally on sample data, so "the page loads" proves nothing.
+- The health check must reach the database, not just the page: `/api/health` separates
+  "environment variables missing" from "Supabase not answering". The app no longer falls
+  back to sample data — a failed load shows a red banner — but check the data anyway.
+- Vercel preview deployments are behind SSO and cannot be curl'd from a session. Ship
+  server changes to production before pointing the client at them; that is the only way
+  to verify environment variables without the client's browser.
 - CI is the merge gate, and it runs `npm run build` only. **Green means it compiles, not
   that it works.** There are no tests, no linter and no formatter to add to it.
 - Deployment is Vercel's native Git integration, not an Action: an Action would need a
   token to do what the integration does with no credentials at all. There is no staging —
-  whatever is on `main` is what customers get.
-- **That merging to `main` publishes has not actually been observed.** Adoption's merge
-  produced no Vercel deployment, most likely because the output was identical to the
-  preview already built. Preview deploys on PRs are confirmed; production is not. The
-  next change that alters the bundle settles it — see `CLAUDE.md`. Until then, no merge
-  is finished until the live bundle filename has been checked by hand.
+  whatever is on `main` is what customers get, live about 20 seconds after the merge. A
+  merge whose output is byte-identical to an existing preview publishes nothing, which is
+  correct, not a fault.
 - `/next` is the default way of working, not a command. Nobody should need to know it
   exists.
 - Every PR closes its issue, and the issue's label is its stage. Auto-close doesn't
@@ -69,5 +73,3 @@ endorsement.
 - The knowledge graph is local-only and never committed: `graphify` falls back to the
   `claude` CLI on `PATH`, so a bare `extract` becomes a nested agent shipping the
   repository off the machine. Always `--code-only` and `--no-label`.
-- Adoption changed no application code, on purpose. Everything it deliberately left
-  alone is above, and each one ships — if it ships — as its own issue through `/next`.
