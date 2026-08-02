@@ -140,6 +140,15 @@ function utcCompact(d) {
 // 4. Copia la URL que te da y pégala aquí abajo, entre las comillas:
 const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbyF4j9RdthndhkqTrLADCahcU09mCafFxJ3RGMuLiAtnQQUwKc6VbqvUVfxG6rfc942/exec";
 
+// ====== Modo mantenimiento ======
+// Congela TODAS las escrituras mientras se migran los datos a la base de datos nueva.
+// Las lecturas siguen funcionando: la web se ve y Félix sigue viendo su agenda.
+// Se pone a false en el mismo cambio que apunta la app a la base de datos nueva.
+const MAINTENANCE_MODE = true;
+const MAINTENANCE_MSG =
+  "Estamos actualizando el sistema de reservas. Ahora mismo no se pueden hacer, cambiar ni cancelar citas. " +
+  "Las citas ya reservadas están guardadas y se mantienen. Vuelve a intentarlo en un rato.";
+
 async function loadShared(key, fallback) {
   if (SHEETS_API_URL) {
     try {
@@ -162,6 +171,9 @@ async function loadShared(key, fallback) {
 }
 
 async function saveShared(key, value) {
+  // Último cortafuegos del modo mantenimiento: ninguna escritura sale de aquí,
+  // por mucho que alguna pantalla se dejara sin bloquear.
+  if (MAINTENANCE_MODE) return false;
   let sheetsOk = false;
   if (SHEETS_API_URL) {
     try {
@@ -186,6 +198,7 @@ async function saveShared(key, value) {
 
 // Envía un aviso por correo (cancelación del barbero al cliente, o del cliente al barbero)
 async function sendNotification(to, subject, message) {
+  if (MAINTENANCE_MODE) return false;
   if (!SHEETS_API_URL || !to) return false;
   try {
     await fetch(SHEETS_API_URL, {
@@ -343,18 +356,27 @@ export default function FelixBarberiaApp() {
     return () => { mounted = false; };
   }, []);
 
-  async function setServices(next) { setServicesState(next); return await saveShared("felix-services", next); }
-  function setBarbers(next) { setBarbersState(next); saveShared("felix-barbers", next); }
-  function setBlockedRanges(next) { setBlockedRangesState(next); saveShared("felix-blocked-ranges", next); }
-  function setBlockedDays(next) { setBlockedDaysState(next); saveShared("felix-blocked-days", next); }
-  function setFestivos(next) { setFestivosState(next); saveShared("felix-festivos", next); }
-  function setVacationRanges(next) { setVacationRangesState(next); saveShared("felix-vacation-ranges", next); }
-  function setPortfolio(next) { setPortfolioState(next); saveShared("felix-portfolio", next); }
-  function setWaitlist(next) { setWaitlistState(next); saveShared("felix-waitlist", next); }
-  function setSchedule(next) { setScheduleState(next); saveShared("felix-schedule", next); }
+  // Durante el mantenimiento ninguna escritura toca ni el estado local ni el almacén:
+  // avisa al usuario y no cambia nada, para que nunca parezca que se guardó algo que no se guardó.
+  function blockedByMaintenance() {
+    if (!MAINTENANCE_MODE) return false;
+    if (typeof window !== "undefined") window.alert(MAINTENANCE_MSG);
+    return true;
+  }
+
+  async function setServices(next) { if (blockedByMaintenance()) return false; setServicesState(next); return await saveShared("felix-services", next); }
+  function setBarbers(next) { if (blockedByMaintenance()) return; setBarbersState(next); saveShared("felix-barbers", next); }
+  function setBlockedRanges(next) { if (blockedByMaintenance()) return; setBlockedRangesState(next); saveShared("felix-blocked-ranges", next); }
+  function setBlockedDays(next) { if (blockedByMaintenance()) return; setBlockedDaysState(next); saveShared("felix-blocked-days", next); }
+  function setFestivos(next) { if (blockedByMaintenance()) return; setFestivosState(next); saveShared("felix-festivos", next); }
+  function setVacationRanges(next) { if (blockedByMaintenance()) return; setVacationRangesState(next); saveShared("felix-vacation-ranges", next); }
+  function setPortfolio(next) { if (blockedByMaintenance()) return; setPortfolioState(next); saveShared("felix-portfolio", next); }
+  function setWaitlist(next) { if (blockedByMaintenance()) return; setWaitlistState(next); saveShared("felix-waitlist", next); }
+  function setSchedule(next) { if (blockedByMaintenance()) return; setScheduleState(next); saveShared("felix-schedule", next); }
 
   // Escribe la lista de citas y la sincroniza en el estado local
   async function commitAppointments(next) {
+    if (blockedByMaintenance()) return appointments;
     setAppointmentsState(next);
     await saveShared("felix-appointments", next);
     return next;
@@ -410,8 +432,9 @@ export default function FelixBarberiaApp() {
       <TopChrome menuOpen={menuOpen} setMenuOpen={setMenuOpen} onAdmin={() => goTo("admin")} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onContacto={() => goTo("contacto")} onGaleria={() => goTo("galeria")} />
 
       <div className="wood-bg" style={{ paddingBottom: 78, minHeight: "100vh" }}>
+        {MAINTENANCE_MODE && <MaintenanceBanner />}
         {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} />}
-        {view === "reservar" && <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />}
+        {view === "reservar" && (MAINTENANCE_MODE ? <MaintenanceCard /> : <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />)}
         {view === "misCitas" && <MisCitas {...shared} />}
         {view === "contacto" && <Contacto schedule={schedule} />}
         {view === "galeria" && <Galeria portfolio={portfolio} barbers={barbers} />}
@@ -419,6 +442,39 @@ export default function FelixBarberiaApp() {
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
+    </div>
+  );
+}
+
+function MaintenanceBanner() {
+  return (
+    <div style={{ background: "#3a2f14", borderBottom: "1px solid #6b5723", color: "#f2dfa6", padding: "12px 16px", fontSize: 13, lineHeight: 1.45, textAlign: "center" }}>
+      <strong style={{ color: GOLD }}>Estamos actualizando el sistema de reservas.</strong>{" "}
+      Ahora mismo no se pueden hacer ni cancelar citas. Las que ya tienes reservadas se mantienen.{" "}
+      Si necesitas algo urgente, escríbenos por WhatsApp al{" "}
+      <a href={`https://wa.me/${BARBER_WHATSAPP}`} style={{ color: GOLD, textDecoration: "underline" }}>610 97 57 33</a>.
+    </div>
+  );
+}
+
+function MaintenanceCard() {
+  return (
+    <div className="fade-in" style={{ padding: 24, maxWidth: 520, margin: "0 auto" }}>
+      <div className="card" style={{ borderRadius: 14, padding: 24, textAlign: "center" }}>
+        <Clock size={34} color={GOLD} style={{ marginBottom: 12 }} />
+        <h2 style={{ fontSize: 19, margin: "0 0 10px", color: "#f5f1e8" }}>Reservas cerradas un momento</h2>
+        <p style={{ fontSize: 14, lineHeight: 1.55, color: "#c9c3b6", margin: "0 0 18px" }}>
+          Estamos pasando las citas a un sistema nuevo, más seguro. Es cosa de un rato.
+          <br /><br />
+          <strong style={{ color: "#f5f1e8" }}>Tus citas ya reservadas siguen en pie</strong> — no tienes que volver a pedirlas.
+        </p>
+        <a
+          href={`https://wa.me/${BARBER_WHATSAPP}`}
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, background: GOLD, color: "#0B0B0A", padding: "12px 20px", borderRadius: 10, fontSize: 14, fontWeight: 600, textDecoration: "none" }}
+        >
+          <MessageCircle size={17} /> Escribir por WhatsApp
+        </a>
+      </div>
     </div>
   );
 }
