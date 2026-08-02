@@ -6,11 +6,18 @@
 
 ## What must never break
 
-**Not yet answered by the client.** Asked during adoption; when the answer comes it goes
-here verbatim, in their words, and becomes an acceptance criterion on every change from
-then on. Until then, treat *taking a booking* and *the barber seeing today's bookings* as
-the two things that must survive any change — that is an inference from the code, not
-something anyone said.
+The client's own words, asked at adoption. All four, not a priority order. These are
+acceptance criteria on every change from here on:
+
+- **"Que no se pierda una cita"** — no booking already made ever disappears or duplicates.
+- **"Que Félix vea el día"** — the admin panel always shows who is coming in today.
+- **"Que se pueda reservar"** — a customer can pick a time and end up with a booking.
+- **"Que la web se vea"** — the address opens and shows the barbershop, even if booking
+  is broken.
+
+The first one binds hardest, and the app's storage model works against it: a save
+rewrites a whole JSON blob, so two writes at once lose one. Read `ADR.md` before touching
+anything that writes.
 
 ## What this is
 
@@ -31,7 +38,13 @@ something anyone said.
 
 ## Deliberately absent
 
-- **No custom domain.** It lives on `felix-barberia.vercel.app`.
+- **No custom domain, by choice.** Asked at adoption; the client is happy on
+  `felix-barberia.vercel.app`. Don't re-offer one unasked.
+- **The security shape was left as it is, by choice** (adoption, Aug 2026). The client was
+  shown that the admin password is public and that customer names and phones can be read
+  by anyone with the data-store URL, and chose to keep the current setup for now. It is
+  written up in `ADR.md` as a known risk. Do not re-propose it as a fix in passing; if it
+  comes back it comes back as their decision, once, with its own issue.
 - **No customer accounts and no passwords.** A name and a phone is the whole identity.
 - **No payments.** Nobody pays through the app.
 - **No tests, linter or formatter.** Not an oversight to fix in passing — see `ADR.md`.
