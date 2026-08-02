@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "adopt": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/adopt/SKILL.md",
+      "computedHash": "1f21dbd1d7a72db81f044ffd2d1b02cd1e60816d72aa27b1df48af3273fa0d88"
+    },
+    "gaps": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gaps/SKILL.md",
+      "computedHash": "f666a68d6913878543b7d288294be3e0ffbdbf8c6b44fad8503775dcd360be2a"
+    },
+    "graphify": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/graphify/SKILL.md",
+      "computedHash": "a7f8250125ec232786ceb361259544d5f388f151a6323a39228d1526d509b674"
+    },
+    "migrate": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/migrate/SKILL.md",
+      "computedHash": "6223f695bf2582377aa55c06404fdaeb5e93280d38aa4e31af39f17df25f9c23"
+    },
+    "next": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/next/SKILL.md",
+      "computedHash": "351fd9ed9691a327fab7b6797552cf44537e74b44fefa133a5a4d625a83ccd78"
+    },
+    "setup": {
+      "source": "aquine-kujaruk/skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup/SKILL.md",
+      "computedHash": "f48b836947bf37db544a18537692019508f9d343c903d5857a78c17948898d55"
+    }
+  }
+}
