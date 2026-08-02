@@ -47,6 +47,19 @@ export function vacationOut(r) {
   return { start: r.start_date, end: r.end_date, label: r.label };
 }
 
+// Una reserva temporal, tal y como la ve el navegador. No lleva —ni puede
+// llevar— nombre, teléfono ni correo: la tabla no los guarda.
+export function holdOut(r) {
+  return {
+    id: r.id,
+    barberId: r.barber_id,
+    dateKey: r.hold_date,
+    time: String(r.start_time).slice(0, 5),
+    duration: r.duration_minutes,
+    expiresAt: r.expires_at,
+  };
+}
+
 export function waitlistOut(r) {
   return { id: String(r.id), name: r.customer_name, phone: r.customer_phone, service: r.service_id, dateKey: r.preferred_date, note: r.note };
 }
