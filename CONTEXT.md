@@ -43,11 +43,8 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
 
 - **No custom domain, by choice.** Asked at adoption; the client is happy on
   `felix-barberia.vercel.app`. Don't re-offer one unasked.
-- **The admin panel is still unprotected, by choice** (Aug 2026). The client was shown
-  that its password is public and chose to leave it. The Supabase migration closed the
-  other half of that risk — customer names and phones are no longer readable by anyone
-  with a URL — but the panel itself is unchanged. Don't re-propose it in passing.
 - **No customer accounts and no passwords.** A name and a phone is the whole identity.
+  Félix's own panel password is the one exception, and it lives in Vercel, not the code.
 - **No payments.** Nobody pays through the app.
 - **No tests, linter or formatter.** Not an oversight to fix in passing — see `ADR.md`.
 - **The gallery photos still come from the code**, not from the database. Uploading them
