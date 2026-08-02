@@ -103,6 +103,10 @@ function toHHMM(mins) {
   const m = (mins % 60).toString().padStart(2, "0");
   return `${h}:${m}`;
 }
+// Un <input type="time"> puede venir vacío mientras se escribe.
+function isValidTimeText(v) {
+  return typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+}
 // Lo que queda de una reserva temporal, en mm:ss.
 function fmtCountdown(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
@@ -777,6 +781,32 @@ function Galeria({ portfolio, barbers }) {
 
 /* ===================== CLIENTE ===================== */
 
+// Las reservas temporales vivas de un barbero en un día. Se compara expiresAt
+// contra la hora de ahora, así que una caducada que aún viaje en los datos no
+// cuenta. Con ownHoldId se excluye la propia: quien reservó la hora sigue
+// viéndola.
+//
+// Lo usan por igual la pantalla de reserva y el panel de Félix. Es el mismo
+// cálculo a propósito: si el panel usara otro, Félix podría citar a alguien
+// encima de quien está reservando en ese momento.
+function liveHoldsOn(holds, k, barberId, ownHoldId = null) {
+  const nowMs = Date.now();
+  return (holds || []).filter(
+    (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId &&
+      new Date(h.expiresAt).getTime() > nowMs
+  );
+}
+
+// La reserva temporal viva que pisa este tramo, si la hay.
+function holdCovering(holds, k, barberId, time, durationMin) {
+  const start = toMin(time);
+  const end = start + durationMin;
+  return liveHoldsOn(holds, k, barberId).find((h) => {
+    const hStart = toMin(h.time);
+    return start < hStart + (h.duration || 30) && hStart < end;
+  }) || null;
+}
+
 function computeAvailableSlots({ date, durationMin, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds = [], ownHoldId = null }) {
   const dow = date.getDay();
   const k = dateKey(date);
@@ -788,14 +818,8 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   const dayAppts = appointments.filter((a) => a.dateKey === k && a.barberId === barberId);
   const dayBlockedRanges = blockedRanges.filter((b) => b.dateKey === k);
   // Las reservas temporales de otros ocultan la hora igual que una cita. La
-  // propia no: comparando por id, quien reservó la hora sigue viéndola. Se
-  // mira expiresAt contra ahora, así que una caducada que aún viaje en los
-  // datos no bloquea nada.
-  const nowMs = Date.now();
-  const dayHolds = (holds || []).filter(
-    (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId &&
-      new Date(h.expiresAt).getTime() > nowMs
-  );
+  // propia no: comparando por id, quien reservó la hora sigue viéndola.
+  const dayHolds = liveHoldsOn(holds, k, barberId, ownHoldId);
   const now = new Date();
   const isToday = k === dateKey(now);
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -1510,7 +1534,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule }) {
   const [authed, setAuthed] = useState(false);
 
   const [tab, setTab] = useState("dia"); // dia | semana | mes | clientes | ajustes
@@ -1621,8 +1645,15 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
 
   async function addManualAppt(data) {
     try {
+      // Sin holdId a propósito: el panel no tiene reserva temporal propia, y
+      // eso es justo lo que hace que le afecten las de quien reserva por la web.
       await createAppointment(data);
     } catch (e) {
+      if (e.reason === "slot_held") {
+        // No es un error: alguien está rellenando sus datos sobre esa hora.
+        window.alert("Alguien está reservando esa hora por la web ahora mismo. Se libera sola en unos minutos si no llega a confirmar; prueba otra vez dentro de un rato o elige otra hora.");
+        return;
+      }
       // Si el hueco ya está ocupado lo dice la base de datos, no una
       // comprobación que se puede colar.
       window.alert(`No se ha podido crear la cita: ${e.message}`);
@@ -1878,7 +1909,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       )}
 
       {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
-      {showAdd && <AddApptModal services={services} barbers={barbers} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
+      {showAdd && <AddApptModal services={services} barbers={barbers} holds={holds} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
       {showBlock && <BlockHourModal onClose={() => setShowBlock(false)} onSave={blockRange} />}
       {showVacation && <VacationModal onClose={() => setShowVacation(false)} onSave={addVacation} />}
     </div>
@@ -2241,13 +2272,26 @@ function ApptModal({ appt, services, barbers, onClose, onCancel, onToggleNoShow 
   );
 }
 
-function AddApptModal({ services, barbers, onClose, onSave }) {
+function AddApptModal({ services, barbers, holds, onClose, onSave }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState(dateKey(new Date()));
   const [time, setTime] = useState("10:00");
   const [service, setService] = useState(services[0].id);
   const [barberId, setBarberId] = useState(barbers[0]?.id);
+  // Una reserva temporal caduca sola: el aviso tiene que desaparecer cuando
+  // eso ocurra, sin que Félix cierre y vuelva a abrir la ventana.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const chosenService = services.find((s) => s.id === service);
+  const held = isValidTimeText(time)
+    ? holdCovering(holds, date, barberId, time, (chosenService && chosenService.duration) || 30)
+    : null;
+  const canSave = Boolean(name.trim()) && isPhoneValid(phone) && !held;
   return (
     <ModalShell title="Añadir cita manual" onClose={onClose}>
       <FormField label="Nombre"><input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} style={inputStyle} /></FormField>
@@ -2269,7 +2313,13 @@ function AddApptModal({ services, barbers, onClose, onSave }) {
           </select>
         </FormField>
       )}
-      <button disabled={!name.trim() || !isPhoneValid(phone)} onClick={() => onSave({ dateKey: date, time, service, barberId, name, phone })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: name.trim() && isPhoneValid(phone) ? 1 : 0.5 }}>Guardar cita</button>
+      {held && (
+        <div className="card" style={{ padding: 12, borderRadius: 10, fontSize: 12.5, color: "#f2d9a6", border: "1px solid #6b5323", marginTop: 8 }}>
+          Alguien está reservando esa hora por la web ahora mismo. Se libera sola en unos
+          minutos si no llega a confirmar. Espera un poco o elige otra hora.
+        </div>
+      )}
+      <button disabled={!canSave} onClick={() => onSave({ dateKey: date, time, service, barberId, name, phone })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: canSave ? 1 : 0.5 }}>Guardar cita</button>
     </ModalShell>
   );
 }
