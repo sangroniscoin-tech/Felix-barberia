@@ -475,6 +475,20 @@ export default function FelixBarberiaApp() {
   async function setWaitlist(next)       { return saveCollection("waitlist", next, setWaitlistState, waitlist); }
   async function setSchedule(next)       { return saveCollection("schedule", next, setScheduleState, schedule); }
 
+  // Apuntarse a la lista de espera lo hace un CLIENTE, no Félix, así que va
+  // por su propia ruta pública — que solo sabe añadir una fila. El panel sigue
+  // usando setWaitlist, identificado, para gestionarla y borrar de ella.
+  async function joinWaitlist(entry) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    await apiSend("/api/waitlist", "POST", {
+      name: entry.name,
+      phone: entry.phone,
+      service: entry.service,
+      dateKey: entry.dateKey,
+    });
+    setWaitlistState((prev) => [...prev, entry]);
+  }
+
   // La galería sigue con las fotos del código: guardar imágenes pide
   // almacenamiento de ficheros, no una columna de texto. Petición aparte.
   function setPortfolio(next) { setPortfolioState(next); }
@@ -550,7 +564,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -929,7 +943,7 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   return slots;
 }
 
-function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, waitlist, setWaitlist, schedule }) {
+function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, joinWaitlist, schedule }) {
   const singleBarber = barbers.length === 1;
   const barberStepEnabled = !singleBarber;
   const serviceStepNum = barberStepEnabled ? 2 : 1;
@@ -1237,8 +1251,7 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
                   dateLabel={fmtLong(selectedDate)}
                   service={service}
                   barberId={barberId}
-                  waitlist={waitlist}
-                  setWaitlist={setWaitlist}
+                  joinWaitlist={joinWaitlist}
                 />
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
@@ -1390,23 +1403,35 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   );
 }
 
-function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, waitlist, setWaitlist }) {
+function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [done, setDone] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
-  function join() {
-    const entry = {
-      id: "w" + Date.now(),
-      dateKey: dk,
-      service: service.id,
-      barberId,
-      name,
-      phone,
-      createdAt: Date.now(),
-    };
-    setWaitlist([...waitlist, entry]);
-    setDone(true);
+  async function join() {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await joinWaitlist({
+        id: "w" + Date.now(),
+        dateKey: dk,
+        service: service.id,
+        barberId,
+        name,
+        phone,
+        createdAt: Date.now(),
+      });
+      setDone(true);
+    } catch (e) {
+      // En palabras que entienda un cliente. Antes salía una alerta hablando
+      // de sesiones y de claves, que aquí no significan nada para nadie.
+      setError(e.message || "No se ha podido guardar. Inténtalo otra vez.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (done) {
@@ -1427,8 +1452,9 @@ function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, waitlist, set
         <input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} placeholder="Tu nombre" style={inputStyle} />
         <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" placeholder="Tu teléfono" style={inputStyle} />
         {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
-        <button onClick={join} disabled={!name.trim() || !isPhoneValid(phone)} className="gold-btn" style={{ padding: 11, borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: name.trim() && isPhoneValid(phone) ? "pointer" : "not-allowed", opacity: name.trim() && isPhoneValid(phone) ? 1 : 0.5 }}>
-          Unirme a la lista de espera
+        {error && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>{error}</span>}
+        <button onClick={join} disabled={!name.trim() || !isPhoneValid(phone) || saving} className="gold-btn" style={{ padding: 11, borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: name.trim() && isPhoneValid(phone) && !saving ? "pointer" : "not-allowed", opacity: name.trim() && isPhoneValid(phone) && !saving ? 1 : 0.5 }}>
+          {saving ? "Apuntando…" : "Unirme a la lista de espera"}
         </button>
       </div>
     </div>
