@@ -1,7 +1,8 @@
 // Todo lo que la app necesita al arrancar, en una sola petición.
 // Sustituye a las diez llamadas sueltas que hoy se hacen a Google Sheets.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
-import { serviceOut, barberOut, appointmentOut, scheduleOut, blockedRangeOut, vacationOut, waitlistOut } from "./_lib/shape.js";
+import { serviceOut, barberOut, appointmentOut, scheduleOut, blockedRangeOut, vacationOut, waitlistOut, holdOut } from "./_lib/shape.js";
+import { purgeExpiredHolds } from "./_lib/holds.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
@@ -9,7 +10,11 @@ export default async function handler(req, res) {
   try {
     const supabase = getSupabase();
 
-    const [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, waitlist] =
+    // Barrido oportunista de reservas temporales caducadas. Sin cron: la
+    // limpieza va con el uso normal de la aplicación.
+    await purgeExpiredHolds(supabase);
+
+    const [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, waitlist, holds] =
       await Promise.all([
         supabase.from("services").select("*").eq("active", true).order("sort_order"),
         supabase.from("barbers").select("*").eq("active", true),
@@ -21,9 +26,11 @@ export default async function handler(req, res) {
         supabase.from("festivos").select("festivo_date"),
         supabase.from("vacation_ranges").select("*"),
         supabase.from("waitlist").select("*").order("created_at"),
+        // Solo las que siguen vivas: una caducada no debe ocultar una hora.
+        supabase.from("slot_holds").select("*").gt("expires_at", new Date().toISOString()),
       ]);
 
-    for (const r of [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, waitlist]) {
+    for (const r of [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, waitlist, holds]) {
       if (r.error) throw new Error(r.error.message);
     }
 
@@ -41,6 +48,7 @@ export default async function handler(req, res) {
       festivos: festivos.data.map((r) => r.festivo_date),
       vacationRanges: vacations.data.map(vacationOut),
       waitlist: waitlist.data.map(waitlistOut),
+      holds: holds.data.map(holdOut),
     });
   } catch (e) {
     return fail(res, e);

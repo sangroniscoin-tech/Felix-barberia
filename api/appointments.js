@@ -8,6 +8,7 @@ import {
   appointmentOut, cleanName, cleanPhone, cleanEmail,
   isValidPhone, isValidEmail, isValidDateKey, isValidTime,
 } from "./_lib/shape.js";
+import { conflictingHold } from "./_lib/holds.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -32,6 +33,10 @@ export default async function handler(req, res) {
     const time = body.time;
     const serviceId = body.service;
     const barberId = body.barberId || "felix";
+    // Opcional: la reserva temporal que esta persona tiene sobre esta hora.
+    // El panel de Félix crea la cita SIN holdId, que es justo lo que hace que
+    // le afecten las reservas temporales de quien está reservando por la web.
+    const holdId = typeof body.holdId === "string" && body.holdId ? body.holdId : null;
 
     if (!name) return bad(res, "Falta el nombre.", "name");
     if (!isValidPhone(phone)) {
@@ -51,6 +56,24 @@ export default async function handler(req, res) {
       const { data: barber } = await supabase
         .from("barbers").select("id").eq("id", barberId).eq("active", true).single();
       if (!barber) return bad(res, "Ese barbero no existe.", "barberId");
+
+      // ¿Hay alguien rellenando sus datos sobre esta hora ahora mismo? La
+      // reserva temporal propia (la del holdId recibido) no cuenta: si contase,
+      // nadie podría confirmar la cita que acaba de reservarse la hora.
+      const held = await conflictingHold(supabase, {
+        barberId: barber.id,
+        dateKey,
+        time,
+        durationMinutes: service.duration_minutes,
+        exceptId: holdId,
+      });
+      if (held) {
+        return res.status(409).json({
+          ok: false,
+          reason: "slot_held",
+          message: "Alguien está reservando esa hora ahora mismo. Se libera en unos minutos.",
+        });
+      }
 
       const row = {
         id: `c${Date.now()}${Math.floor(Math.random() * 1000)}`,
@@ -83,6 +106,16 @@ export default async function handler(req, res) {
           });
         }
         throw new Error(error.message);
+      }
+
+      // La cita ya existe: la reserva temporal ha cumplido su función y sobra.
+      if (holdId) {
+        try {
+          await supabase.from("slot_holds").delete().eq("id", holdId);
+        } catch {
+          // Si no se borra, caduca sola en unos minutos. La cita está guardada,
+          // que es lo único que no puede fallar aquí.
+        }
       }
 
       return res.status(201).json({ ok: true, appointment: appointmentOut(data) });

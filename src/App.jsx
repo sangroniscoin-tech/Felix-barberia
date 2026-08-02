@@ -103,6 +103,13 @@ function toHHMM(mins) {
   const m = (mins % 60).toString().padStart(2, "0");
   return `${h}:${m}`;
 }
+// Lo que queda de una reserva temporal, en mm:ss.
+function fmtCountdown(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60).toString().padStart(2, "0");
+  const s = (total % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
 function dateKey(d) {
   return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
 }
@@ -338,6 +345,9 @@ export default function FelixBarberiaApp() {
   const [portfolio, setPortfolioState] = useState(DEFAULT_PORTFOLIO);
   const [waitlist, setWaitlistState] = useState(DEFAULT_WAITLIST);
   const [schedule, setScheduleState] = useState(DEFAULT_SCHEDULE);
+  // Reservas temporales vivas: las horas que alguien está rellenando ahora
+  // mismo. Se restan de la disponibilidad, igual que una cita.
+  const [holds, setHoldsState] = useState([]);
 
   const [loadError, setLoadError] = useState(null);
 
@@ -356,6 +366,7 @@ export default function FelixBarberiaApp() {
         setVacationRangesState(d.vacationRanges);
         setWaitlistState(d.waitlist);
         setScheduleState(d.schedule);
+        setHoldsState(d.holds || []);
         setLoadError(null);
       } catch (e) {
         if (!mounted) return;
@@ -428,13 +439,41 @@ export default function FelixBarberiaApp() {
     return body.appointment;
   }
 
+  // Las reservas temporales recién leídas, para poder consultarlas justo
+  // después de un refresco sin esperar a que React vuelva a pintar.
+  const latestHoldsRef = useRef([]);
+  useEffect(() => { latestHoldsRef.current = holds; }, [holds]);
+
+  // Guarda la hora elegida mientras el cliente rellena sus datos. Es una
+  // comodidad, no una garantía: si falla, quien reserva no se entera y sigue
+  // adelante. La garantía contra el solape sigue siendo la base de datos.
+  async function createHold(data) {
+    const body = await apiSend("/api/holds", "POST", data);
+    return body.hold;
+  }
+
+  // Suelta la hora en cuanto se sabe que ya no hace falta. Caducar es la red
+  // de seguridad, no el mecanismo normal.
+  async function releaseHold(id) {
+    if (!id) return;
+    try {
+      await apiSend("/api/holds", "DELETE", { id });
+    } catch {
+      // Si no se suelta, caduca sola en unos minutos. Nunca es motivo para
+      // enseñarle un error a nadie.
+    }
+    setHoldsState((prev) => prev.filter((h) => h.id !== id));
+  }
+
   // Relee la disponibilidad real justo antes de confirmar. Ya no es la única
   // defensa contra dos reservas a la vez —de eso se encarga la base de datos—
   // pero evita enseñar como libre un hueco que acaban de ocupar.
   async function refreshAppointments() {
-    const latest = (await apiGet("/api/bootstrap")).appointments;
-    setAppointmentsState(latest);
-    return latest;
+    const d = await apiGet("/api/bootstrap");
+    setAppointmentsState(d.appointments);
+    setHoldsState(d.holds || []);
+    latestHoldsRef.current = d.holds || [];
+    return d.appointments;
   }
 
   function goReservar(serviceId) {
@@ -448,7 +487,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -738,7 +777,7 @@ function Galeria({ portfolio, barbers }) {
 
 /* ===================== CLIENTE ===================== */
 
-function computeAvailableSlots({ date, durationMin, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule }) {
+function computeAvailableSlots({ date, durationMin, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds = [], ownHoldId = null }) {
   const dow = date.getDay();
   const k = dateKey(date);
   if (blockedDays.includes(k) || festivos.includes(k)) return [];
@@ -748,6 +787,15 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   const blocks = schedule[dow] || [];
   const dayAppts = appointments.filter((a) => a.dateKey === k && a.barberId === barberId);
   const dayBlockedRanges = blockedRanges.filter((b) => b.dateKey === k);
+  // Las reservas temporales de otros ocultan la hora igual que una cita. La
+  // propia no: comparando por id, quien reservó la hora sigue viéndola. Se
+  // mira expiresAt contra ahora, así que una caducada que aún viaje en los
+  // datos no bloquea nada.
+  const nowMs = Date.now();
+  const dayHolds = (holds || []).filter(
+    (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId &&
+      new Date(h.expiresAt).getTime() > nowMs
+  );
   const now = new Date();
   const isToday = k === dateKey(now);
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -775,6 +823,13 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
           if (conflictEnd === null || bEnd > conflictEnd) conflictEnd = bEnd;
         }
       });
+      dayHolds.forEach((h) => {
+        const hStart = toMin(h.time);
+        const hEnd = hStart + (h.duration || 30);
+        if (slotStart < hEnd && hStart < slotEnd) {
+          if (conflictEnd === null || hEnd > conflictEnd) conflictEnd = hEnd;
+        }
+      });
 
       const isPast = isToday && slotStart <= nowMin;
 
@@ -791,7 +846,7 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   return slots;
 }
 
-function ClientBooking({ services, barbers, appointments, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, waitlist, setWaitlist, schedule }) {
+function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, waitlist, setWaitlist, schedule }) {
   const singleBarber = barbers.length === 1;
   const barberStepEnabled = !singleBarber;
   const serviceStepNum = barberStepEnabled ? 2 : 1;
@@ -813,6 +868,83 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
   const [cancelled, setCancelled] = useState(false);
   const [bookingError, setBookingError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // La reserva temporal de esta persona: { id, expiresAt }. Puede ser null si
+  // el servidor no consiguió guardarla, y entonces se reserva igual, sin
+  // protección y sin que se entere nadie.
+  const [hold, setHold] = useState(null);
+  const [holdLeftMs, setHoldLeftMs] = useState(0);
+  const holdRef = useRef(null);
+  // Cada intento de guardar una hora lleva su número. Si cuando llega la
+  // respuesta el número ya no es el suyo, es que la persona se fue: esa
+  // reserva se suelta en vez de guardarse.
+  const holdSeqRef = useRef(0);
+
+  // Suelta la reserva temporal actual, si la hay, y anula cualquier petición
+  // en vuelo. Una persona tiene una sola reserva temporal a la vez.
+  function dropHold() {
+    holdSeqRef.current += 1;
+    const previous = holdRef.current;
+    holdRef.current = null;
+    setHold(null);
+    setHoldLeftMs(0);
+    if (previous) releaseHold(previous.id);
+  }
+
+  // Al pasar a la pantalla de datos se guarda la hora durante 5 minutos.
+  async function goToDataStep() {
+    dropHold();
+    const seq = holdSeqRef.current;
+    setBookingError(null);
+    setStep(dataStepNum);
+    let h;
+    try {
+      h = await createHold({
+        dateKey: dateKey(selectedDate),
+        time: selectedTime,
+        service: service.id,
+        barberId,
+      });
+    } catch {
+      // Si guardar la hora falla, se sigue reservando con normalidad y sin
+      // enseñar ningún error: una comodidad nunca puede impedir reservar.
+      return;
+    }
+    if (holdSeqRef.current !== seq) {
+      // Se fue mientras se guardaba. La hora no es de nadie: se suelta.
+      releaseHold(h.id);
+      return;
+    }
+    holdRef.current = h;
+    setHold(h);
+  }
+
+  // Al salir de la pantalla de reserva se suelta lo que hubiera guardado.
+  useEffect(() => () => {
+    const pending = holdRef.current;
+    holdRef.current = null;
+    if (pending) releaseHold(pending.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // La cuenta atrás. Al llegar a cero se avisa y se vuelve a elegir hora,
+  // aunque la hora siguiera libre.
+  useEffect(() => {
+    if (!hold || step !== dataStepNum) return undefined;
+    function tick() {
+      const left = new Date(hold.expiresAt).getTime() - Date.now();
+      if (left > 0) { setHoldLeftMs(left); return; }
+      holdSeqRef.current += 1;
+      holdRef.current = null;
+      setHold(null);
+      setHoldLeftMs(0);
+      setSelectedTime(null);
+      setBookingError("Se ha acabado el tiempo para guardar esa hora. Elige el horario otra vez, por favor.");
+      setStep(dateStepNum);
+    }
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [hold, step, dataStepNum, dateStepNum]);
 
   function isDayFullyBlocked(d) {
     const k = dateKey(d);
@@ -834,7 +966,7 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
   }, [blockedDays, festivos, vacationRanges, schedule]);
 
   const availableSlots = selectedDate && service && barberId
-    ? computeAvailableSlots({ date: selectedDate, durationMin: service.duration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule })
+    ? computeAvailableSlots({ date: selectedDate, durationMin: service.duration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds, ownHoldId: hold ? hold.id : null })
     : [];
 
   const barberName = barbers.find((b) => b.id === barberId)?.name || "";
@@ -842,13 +974,19 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
   async function confirmBooking() {
     setSubmitting(true);
     setBookingError(null);
+    const currentHold = holdRef.current;
     const latest = await refreshAppointments();
-    const stillFree = computeAvailableSlots({ date: selectedDate, durationMin: service.duration, barberId, appointments: latest, blockedRanges, blockedDays, festivos, vacationRanges, schedule }).includes(selectedTime);
+    const stillFree = computeAvailableSlots({
+      date: selectedDate, durationMin: service.duration, barberId, appointments: latest,
+      blockedRanges, blockedDays, festivos, vacationRanges, schedule,
+      holds: latestHoldsRef.current, ownHoldId: currentHold ? currentHold.id : null,
+    }).includes(selectedTime);
 
     if (!stillFree) {
       setSubmitting(false);
       setBookingError("Justo ahora alguien ha reservado esa hora. Elige otro horario disponible, por favor.");
       setSelectedTime(null);
+      dropHold();
       setStep(dateStepNum);
       return;
     }
@@ -856,6 +994,8 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
     let appt;
     try {
       // La duración y el precio los pone el servidor a partir del servicio.
+      // El holdId va con el resto: es lo que le dice al servidor que la
+      // reserva temporal que ocupa esa hora es la de esta misma persona.
       appt = await createAppointment({
         dateKey: dateKey(selectedDate),
         time: selectedTime,
@@ -864,19 +1004,27 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
         name,
         phone,
         email: email.trim() || null,
+        holdId: currentHold ? currentHold.id : undefined,
       });
     } catch (e) {
       setSubmitting(false);
-      if (e.reason === "slot_taken") {
-        // La base de datos rechazó el solape: alguien llegó primero.
+      if (e.reason === "slot_taken" || e.reason === "slot_held") {
+        // slot_taken: la base de datos rechazó el solape, alguien llegó
+        // primero. slot_held: otra persona está rellenando esa hora.
         setBookingError(e.message);
         setSelectedTime(null);
+        dropHold();
         setStep(dateStepNum);
       } else {
         setBookingError(e.message || "No se ha podido guardar la cita. Inténtalo otra vez.");
       }
       return;
     }
+    // La cita ya está guardada: el servidor ha borrado la reserva temporal.
+    holdSeqRef.current += 1;
+    holdRef.current = null;
+    setHold(null);
+    setHoldLeftMs(0);
     setConfirmedAppt(appt);
     setSubmitting(false);
     setStep(confirmStepNum);
@@ -1024,7 +1172,7 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
           )}
 
           {selectedDate && selectedTime && (
-            <button onClick={() => setStep(dataStepNum)} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            <button onClick={goToDataStep} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
               Continuar
             </button>
           )}
@@ -1033,13 +1181,21 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
 
       {step === dataStepNum && (
         <div className="fade-in">
-          <button onClick={() => setStep(dateStepNum)} style={{ background: "none", border: "none", color: SMOKE, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: 14, fontSize: 13 }}>
+          <button onClick={() => { dropHold(); setStep(dateStepNum); }} style={{ background: "none", border: "none", color: SMOKE, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: 14, fontSize: 13 }}>
             <ArrowLeft size={14} /> Cambiar hora
           </button>
           <h2 className="display" style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px" }}>Tus datos</h2>
           <div className="card" style={{ padding: 14, borderRadius: 12, fontSize: 13, color: SMOKE, marginBottom: 18 }}>
             {service.name} ({service.price}€){barberStepEnabled ? ` · ${barberName}` : ""} · {fmtLong(selectedDate)} · <strong style={{ color: BONE }}>{selectedTime}</strong>
           </div>
+          {hold && (
+            <div className="card" style={{ padding: 12, borderRadius: 12, fontSize: 12.5, color: SMOKE, marginBottom: 18, display: "flex", alignItems: "center", gap: 8 }}>
+              <Clock size={15} color={GOLD} />
+              <span>
+                Te guardamos esta hora <strong style={{ color: BONE }}>{fmtCountdown(holdLeftMs)}</strong> más.
+              </span>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label style={{ fontSize: 12, color: SMOKE }}>Nombre
               <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
@@ -1141,7 +1297,7 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
               <p style={{ fontSize: 11, color: SMOKE, marginTop: 8 }}>Así el barbero se entera al momento.</p>
             </>
           )}
-          <button onClick={() => { setStep(1); setBarberId(singleBarber ? barbers[0].id : null); setService(null); setSelectedDate(null); setSelectedTime(null); setName(""); setPhone(""); setConfirmedAppt(null); setCancelled(false); setBookingError(null); }}
+          <button onClick={() => { dropHold(); setStep(1); setBarberId(singleBarber ? barbers[0].id : null); setService(null); setSelectedDate(null); setSelectedTime(null); setName(""); setPhone(""); setConfirmedAppt(null); setCancelled(false); setBookingError(null); }}
             style={{ background: "none", border: "none", color: GOLD, fontSize: 13, marginTop: 18, cursor: "pointer" }}>
             Reservar otra cita
           </button>
