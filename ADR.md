@@ -23,6 +23,11 @@ endorsement.
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
   an availability check the guarantee again — it can only be a courtesy on top.
+- `slot_holds` keeps a chosen time for 5 minutes while the customer fills the form. It is
+  the courtesy the entry above allows, never the guarantee: a lost or failed hold must
+  still let the booking through. Its exclusion constraint carries the validity window
+  inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
+  cannot go in an index predicate. Expired rows are swept with normal use; no cron.
 - There is no login and no user accounts. A customer is identified by the name and phone
   they type. "Mis citas" is a lookup, not a session.
 - `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` are stale copies nothing
@@ -40,8 +45,6 @@ endorsement.
   path exists and looks like it works.
 - Four gallery photos are hotlinked from Unsplash. The app depends on somebody else's
   URLs staying up.
-- `package-lock.json` is committed, so CI and Vercel build the same versions. Adding it
-  changed no output: the bundle hash was identical before and after.
 
 **Getting to production**
 
