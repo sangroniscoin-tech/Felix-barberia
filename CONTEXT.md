@@ -15,9 +15,10 @@ acceptance criteria on every change from here on:
 - **"Que la web se vea"** — the address opens and shows the barbershop, even if booking
   is broken.
 
-The first one binds hardest, and the app's storage model works against it: a save
-rewrites a whole JSON blob, so two writes at once lose one. Read `ADR.md` before touching
-anything that writes.
+The first one used to bind hardest against the app's own design: a save rewrote a whole
+JSON blob, so two people booking at once lost one of the bookings. Since the Supabase
+migration (2 Aug 2026) Postgres refuses overlapping appointments outright. Read `ADR.md`
+before touching anything that writes.
 
 ## What this is
 
@@ -40,14 +41,15 @@ anything that writes.
 
 - **No custom domain, by choice.** Asked at adoption; the client is happy on
   `felix-barberia.vercel.app`. Don't re-offer one unasked.
-- **The security shape was left as it is, by choice** (adoption, Aug 2026). The client was
-  shown that the admin password is public and that customer names and phones can be read
-  by anyone with the data-store URL, and chose to keep the current setup for now. It is
-  written up in `ADR.md` as a known risk. Do not re-propose it as a fix in passing; if it
-  comes back it comes back as their decision, once, with its own issue.
+- **The admin panel is still unprotected, by choice** (Aug 2026). The client was shown
+  that its password is public and chose to leave it. The Supabase migration closed the
+  other half of that risk — customer names and phones are no longer readable by anyone
+  with a URL — but the panel itself is unchanged. Don't re-propose it in passing.
 - **No customer accounts and no passwords.** A name and a phone is the whole identity.
 - **No payments.** Nobody pays through the app.
 - **No tests, linter or formatter.** Not an oversight to fix in passing — see `ADR.md`.
-- Nothing was moved off Google Sheets, off Vercel, or restructured during adoption. What
-  the client was offered and declined belongs here as it happens, so it is never
-  re-proposed a month later.
+- **The gallery photos still come from the code**, not from the database. Uploading them
+  needs file storage; it was left out of the Supabase migration on purpose.
+- The Google Sheet is kept, frozen, as the migration's rollback. It is not a live copy
+  and nothing writes to it. What the client is offered and declines belongs here as it
+  happens, so it is never re-proposed a month later.

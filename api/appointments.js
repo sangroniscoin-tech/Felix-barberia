@@ -99,7 +99,8 @@ export default async function handler(req, res) {
     const id = body.id || (req.query && req.query.id);
     if (!id) return bad(res, "Falta el identificador de la cita.", "id");
 
-    const status = body.status === "no_show" ? "no_show" : "cancelled";
+    const allowed = ["booked", "no_show", "cancelled"];
+    const status = allowed.includes(body.status) ? body.status : "cancelled";
 
     try {
       const { data, error } = await supabase

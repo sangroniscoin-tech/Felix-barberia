@@ -141,62 +141,55 @@ function utcCompact(d) {
 const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbyF4j9RdthndhkqTrLADCahcU09mCafFxJ3RGMuLiAtnQQUwKc6VbqvUVfxG6rfc942/exec";
 
 // ====== Modo mantenimiento ======
-// Congela TODAS las escrituras mientras se migran los datos a la base de datos nueva.
-// Las lecturas siguen funcionando: la web se ve y Félix sigue viendo su agenda.
-// Se pone a false en el mismo cambio que apunta la app a la base de datos nueva.
-const MAINTENANCE_MODE = true;
+// Congela TODAS las escrituras. Se usó para migrar de Google Sheets a Supabase;
+// se queda para la próxima vez que haga falta una ventana de congelación.
+// Al ser una constante, ponerla a true elimina del paquete el formulario de
+// reservas y las rutas de escritura: el congelado no depende de una comprobación.
+const MAINTENANCE_MODE = false;
 const MAINTENANCE_MSG =
   "Estamos actualizando el sistema de reservas. Ahora mismo no se pueden hacer, cambiar ni cancelar citas. " +
   "Las citas ya reservadas están guardadas y se mantienen. Vuelve a intentarlo en un rato.";
 
-async function loadShared(key, fallback) {
-  if (SHEETS_API_URL) {
-    try {
-      const res = await fetch(`${SHEETS_API_URL}?key=${encodeURIComponent(key)}`);
-      const text = await res.text();
-      if (text && text !== "null") return JSON.parse(text);
-      return fallback;
-    } catch (e) {
-      // si falla la conexión con Google Sheets, seguimos con el respaldo de abajo
-    }
+// ====== Acceso a datos ======
+// Todo pasa por /api/*, que Vercel ejecuta en el servidor. El navegador no
+// tiene ninguna credencial de la base de datos: no puede, porque todo lo que
+// hay aquí se descarga con la web.
+//
+// A diferencia del acceso anterior, esto NO se traga los errores. Si algo
+// falla, quien llama se entera y se lo dice al usuario. Decir "guardado"
+// cuando no se guardó es el peor fallo que puede tener una agenda.
+
+async function apiGet(path) {
+  const res = await fetch(path, { headers: { Accept: "application/json" } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || body.ok === false) {
+    const err = new Error((body && body.message) || `Error ${res.status}`);
+    err.reason = body && body.reason;
+    err.status = res.status;
+    throw err;
   }
-  try {
-    if (!window.storage) return fallback;
-    const res = await window.storage.get(key, true);
-    if (res && res.value) return JSON.parse(res.value);
-    return fallback;
-  } catch (e) {
-    return fallback;
-  }
+  return body;
 }
 
-async function saveShared(key, value) {
-  // Último cortafuegos del modo mantenimiento: ninguna escritura sale de aquí,
-  // por mucho que alguna pantalla se dejara sin bloquear.
-  if (MAINTENANCE_MODE) return false;
-  let sheetsOk = false;
-  if (SHEETS_API_URL) {
-    try {
-      await fetch(SHEETS_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" }, // evita el aviso CORS de Apps Script
-        body: JSON.stringify({ key, value: JSON.stringify(value) }),
-      });
-      sheetsOk = true;
-    } catch (e) {
-      // si falla, seguimos con el respaldo de abajo
-    }
+async function apiSend(path, method, payload) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body || body.ok === false) {
+    const err = new Error((body && body.message) || `Error ${res.status}`);
+    err.reason = body && body.reason;
+    err.status = res.status;
+    throw err;
   }
-  try {
-    if (!window.storage) return sheetsOk;
-    await window.storage.set(key, JSON.stringify(value), true);
-    return true;
-  } catch (e) {
-    return sheetsOk;
-  }
+  return body;
 }
 
-// Envía un aviso por correo (cancelación del barbero al cliente, o del cliente al barbero)
+// El correo de aviso lo manda el Apps Script antiguo, que sigue en pie solo
+// para esto. BARBER_EMAIL está vacío, así que hoy no se envía nada de todos
+// modos. Mover los avisos fuera de Google es una petición aparte.
 async function sendNotification(to, subject, message) {
   if (MAINTENANCE_MODE) return false;
   if (!SHEETS_API_URL || !to) return false;
@@ -210,6 +203,26 @@ async function sendNotification(to, subject, message) {
   } catch (e) {
     return false;
   }
+}
+
+// ---- Saneado en el navegador ----
+// Es comodidad para quien escribe, no una garantía: el servidor vuelve a
+// validarlo todo, porque esto se puede saltar.
+function sanitizeName(v) {
+  return String(v || "").replace(/\s+/g, " ").trimStart().slice(0, 80);
+}
+function sanitizePhoneInput(v) {
+  return String(v || "").replace(/[^\d\s+]/g, "").slice(0, 20);
+}
+function phoneDigits(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+function isPhoneValid(v) {
+  return /^[0-9]{9,15}$/.test(phoneDigits(v));
+}
+function isEmailValid(v) {
+  const e = String(v || "").trim();
+  return e === "" || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 }
 
 function readFileAsDataUrl(file) {
@@ -326,32 +339,31 @@ export default function FelixBarberiaApp() {
   const [waitlist, setWaitlistState] = useState(DEFAULT_WAITLIST);
   const [schedule, setScheduleState] = useState(DEFAULT_SCHEDULE);
 
+  const [loadError, setLoadError] = useState(null);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [svc, brb, appts, brng, bdays, fest, vac, port, wait, sched] = await Promise.all([
-        loadShared("felix-services", DEFAULT_SERVICES),
-        loadShared("felix-barbers", DEFAULT_BARBERS),
-        loadShared("felix-appointments", initialAppointments),
-        loadShared("felix-blocked-ranges", initialBlockedRanges),
-        loadShared("felix-blocked-days", initialBlockedDays),
-        loadShared("felix-festivos", initialFestivos),
-        loadShared("felix-vacation-ranges", initialVacationRanges),
-        loadShared("felix-portfolio", DEFAULT_PORTFOLIO),
-        loadShared("felix-waitlist", DEFAULT_WAITLIST),
-        loadShared("felix-schedule", DEFAULT_SCHEDULE),
-      ]);
-      if (!mounted) return;
-      setServicesState(svc);
-      setBarbersState(brb);
-      setAppointmentsState(appts);
-      setBlockedRangesState(brng);
-      setBlockedDaysState(bdays);
-      setFestivosState(fest);
-      setVacationRangesState(vac);
-      setPortfolioState(port);
-      setWaitlistState(wait);
-      setScheduleState(sched);
+      try {
+        const d = await apiGet("/api/bootstrap");
+        if (!mounted) return;
+        setServicesState(d.services);
+        setBarbersState(d.barbers);
+        setAppointmentsState(d.appointments);
+        setBlockedRangesState(d.blockedRanges);
+        setBlockedDaysState(d.blockedDays);
+        setFestivosState(d.festivos);
+        setVacationRangesState(d.vacationRanges);
+        setWaitlistState(d.waitlist);
+        setScheduleState(d.schedule);
+        setLoadError(null);
+      } catch (e) {
+        if (!mounted) return;
+        // Antes, un fallo aquí dejaba la web con los datos de ejemplo del
+        // código: parecía funcionar y enseñaba horas libres que no lo estaban.
+        // Ahora se dice.
+        setLoadError(e.message || "No se han podido cargar los datos.");
+      }
     })();
     return () => { mounted = false; };
   }, []);
@@ -364,26 +376,63 @@ export default function FelixBarberiaApp() {
     return true;
   }
 
-  async function setServices(next) { if (blockedByMaintenance()) return false; setServicesState(next); return await saveShared("felix-services", next); }
-  function setBarbers(next) { if (blockedByMaintenance()) return; setBarbersState(next); saveShared("felix-barbers", next); }
-  function setBlockedRanges(next) { if (blockedByMaintenance()) return; setBlockedRangesState(next); saveShared("felix-blocked-ranges", next); }
-  function setBlockedDays(next) { if (blockedByMaintenance()) return; setBlockedDaysState(next); saveShared("felix-blocked-days", next); }
-  function setFestivos(next) { if (blockedByMaintenance()) return; setFestivosState(next); saveShared("felix-festivos", next); }
-  function setVacationRanges(next) { if (blockedByMaintenance()) return; setVacationRangesState(next); saveShared("felix-vacation-ranges", next); }
-  function setPortfolio(next) { if (blockedByMaintenance()) return; setPortfolioState(next); saveShared("felix-portfolio", next); }
-  function setWaitlist(next) { if (blockedByMaintenance()) return; setWaitlistState(next); saveShared("felix-waitlist", next); }
-  function setSchedule(next) { if (blockedByMaintenance()) return; setScheduleState(next); saveShared("felix-schedule", next); }
-
-  // Escribe la lista de citas y la sincroniza en el estado local
-  async function commitAppointments(next) {
-    if (blockedByMaintenance()) return appointments;
-    setAppointmentsState(next);
-    await saveShared("felix-appointments", next);
-    return next;
+  // Guarda una colección del panel y, si el servidor la rechaza, deshace el
+  // cambio en pantalla y lo dice. Nunca se queda una pantalla mostrando algo
+  // que la base de datos no aceptó.
+  async function saveCollection(collection, next, apply, previous) {
+    if (blockedByMaintenance()) return false;
+    apply(next);
+    try {
+      await apiSend("/api/admin", "POST", { collection, items: next });
+      return true;
+    } catch (e) {
+      apply(previous);
+      if (typeof window !== "undefined") window.alert(`No se ha podido guardar: ${e.message}`);
+      return false;
+    }
   }
-  // Vuelve a leer las citas más recientes del almacenamiento compartido (para comprobar disponibilidad justo antes de confirmar)
+
+  async function setServices(next)       { return saveCollection("services", next, setServicesState, services); }
+  async function setBarbers(next)        { return saveCollection("barbers", next, setBarbersState, barbers); }
+  async function setBlockedRanges(next)  { return saveCollection("blockedRanges", next, setBlockedRangesState, blockedRanges); }
+  async function setBlockedDays(next)    { return saveCollection("blockedDays", next, setBlockedDaysState, blockedDays); }
+  async function setFestivos(next)       { return saveCollection("festivos", next, setFestivosState, festivos); }
+  async function setVacationRanges(next) { return saveCollection("vacationRanges", next, setVacationRangesState, vacationRanges); }
+  async function setWaitlist(next)       { return saveCollection("waitlist", next, setWaitlistState, waitlist); }
+  async function setSchedule(next)       { return saveCollection("schedule", next, setScheduleState, schedule); }
+
+  // La galería sigue con las fotos del código: guardar imágenes pide
+  // almacenamiento de ficheros, no una columna de texto. Petición aparte.
+  function setPortfolio(next) { setPortfolioState(next); }
+
+  // Crea una cita. Devuelve la cita creada, o lanza un error con un mensaje
+  // que se puede enseñar tal cual.
+  async function createAppointment(data) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    const body = await apiSend("/api/appointments", "POST", data);
+    setAppointmentsState((prev) => [...prev.filter((a) => a.id !== body.appointment.id), body.appointment]);
+    return body.appointment;
+  }
+
+  // Cancela. No borra: marca. Así queda el rastro de que la cita existió.
+  async function cancelAppointment(id) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    await apiSend("/api/appointments", "PATCH", { id, status: "cancelled" });
+    setAppointmentsState((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function setAppointmentNoShow(id, value) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    const body = await apiSend("/api/appointments", "PATCH", { id, status: value ? "no_show" : "booked" });
+    setAppointmentsState((prev) => prev.map((a) => (a.id === id ? body.appointment : a)));
+    return body.appointment;
+  }
+
+  // Relee la disponibilidad real justo antes de confirmar. Ya no es la única
+  // defensa contra dos reservas a la vez —de eso se encarga la base de datos—
+  // pero evita enseñar como libre un hueco que acaban de ocupar.
   async function refreshAppointments() {
-    const latest = await loadShared("felix-appointments", appointments);
+    const latest = (await apiGet("/api/bootstrap")).appointments;
     setAppointmentsState(latest);
     return latest;
   }
@@ -399,7 +448,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, commitAppointments, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -433,6 +482,7 @@ export default function FelixBarberiaApp() {
 
       <div className="wood-bg" style={{ paddingBottom: 78, minHeight: "100vh" }}>
         {MAINTENANCE_MODE && <MaintenanceBanner />}
+        {loadError && <LoadErrorBanner message={loadError} />}
         {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} />}
         {view === "reservar" && (MAINTENANCE_MODE ? <MaintenanceCard /> : <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />)}
         {view === "misCitas" && <MisCitas {...shared} />}
@@ -453,6 +503,21 @@ function MaintenanceBanner() {
       Ahora mismo no se pueden hacer ni cancelar citas. Las que ya tienes reservadas se mantienen.{" "}
       Si necesitas algo urgente, escríbenos por WhatsApp al{" "}
       <a href={`https://wa.me/${BARBER_WHATSAPP}`} style={{ color: GOLD, textDecoration: "underline" }}>610 97 57 33</a>.
+    </div>
+  );
+}
+
+// Antes, si no se podían cargar los datos, la app seguía con los de ejemplo
+// del código: se veía normal y enseñaba horas libres que no lo estaban.
+// Una página que parece bien no es prueba de nada, así que ahora se dice.
+function LoadErrorBanner({ message }) {
+  return (
+    <div style={{ background: "#3a1414", borderBottom: "1px solid #6b2323", color: "#f2a6a6", padding: "12px 16px", fontSize: 13, lineHeight: 1.45, textAlign: "center" }}>
+      <strong style={{ color: "#ffd7d7" }}>No hemos podido cargar la agenda.</strong>{" "}
+      Lo que ves puede no estar actualizado, así que no reserves desde aquí ahora mismo.{" "}
+      Escríbenos por WhatsApp al{" "}
+      <a href={`https://wa.me/${BARBER_WHATSAPP}`} style={{ color: "#ffd7d7", textDecoration: "underline" }}>610 97 57 33</a>.
+      <span style={{ display: "block", opacity: 0.65, fontSize: 11, marginTop: 4 }}>{message}</span>
     </div>
   );
 }
@@ -726,7 +791,7 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   return slots;
 }
 
-function ClientBooking({ services, barbers, appointments, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, commitAppointments, initialServiceId, waitlist, setWaitlist, schedule }) {
+function ClientBooking({ services, barbers, appointments, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, waitlist, setWaitlist, schedule }) {
   const singleBarber = barbers.length === 1;
   const barberStepEnabled = !singleBarber;
   const serviceStepNum = barberStepEnabled ? 2 : 1;
@@ -788,19 +853,30 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
       return;
     }
 
-    const appt = {
-      id: "c" + Date.now(),
-      dateKey: dateKey(selectedDate),
-      time: selectedTime,
-      service: service.id,
-      duration: service.duration,
-      price: service.price,
-      barberId,
-      name,
-      phone,
-      email: email.trim() || null,
-    };
-    await commitAppointments([...latest, appt]);
+    let appt;
+    try {
+      // La duración y el precio los pone el servidor a partir del servicio.
+      appt = await createAppointment({
+        dateKey: dateKey(selectedDate),
+        time: selectedTime,
+        service: service.id,
+        barberId,
+        name,
+        phone,
+        email: email.trim() || null,
+      });
+    } catch (e) {
+      setSubmitting(false);
+      if (e.reason === "slot_taken") {
+        // La base de datos rechazó el solape: alguien llegó primero.
+        setBookingError(e.message);
+        setSelectedTime(null);
+        setStep(dateStepNum);
+      } else {
+        setBookingError(e.message || "No se ha podido guardar la cita. Inténtalo otra vez.");
+      }
+      return;
+    }
     setConfirmedAppt(appt);
     setSubmitting(false);
     setStep(confirmStepNum);
@@ -814,8 +890,12 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
   }
 
   async function cancelConfirmed() {
-    const latest = await refreshAppointments();
-    await commitAppointments(latest.filter((a) => a.id !== confirmedAppt.id));
+    try {
+      await cancelAppointment(confirmedAppt.id);
+    } catch (e) {
+      window.alert(`No se ha podido cancelar: ${e.message}`);
+      return;
+    }
     setCancelled(true);
     if (BARBER_EMAIL) {
       sendNotification(
@@ -964,23 +1044,31 @@ function ClientBooking({ services, barbers, appointments, blockedRanges, blocked
             <label style={{ fontSize: 12, color: SMOKE }}>Nombre
               <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
                 <User size={15} color={GOLD} />
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
+                <input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} placeholder="Tu nombre" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
               </div>
             </label>
             <label style={{ fontSize: 12, color: SMOKE }}>Teléfono
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: `1px solid ${phone && !isPhoneValid(phone) ? "#8a4b4b" : "rgba(255,255,255,0.2)"}`, borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
                 <Phone size={15} color={GOLD} />
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="612 345 678" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
+                <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" autoComplete="tel" placeholder="612 345 678" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
               </div>
+              {phone && !isPhoneValid(phone) && (
+                <span style={{ color: "#f2a6a6", fontSize: 11.5, display: "block", marginTop: 4 }}>
+                  Escribe un teléfono válido, al menos 9 dígitos. Es como te avisamos si hay un cambio.
+                </span>
+              )}
             </label>
             <label style={{ fontSize: 12, color: SMOKE }}>Correo (opcional, para el recordatorio)
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: `1px solid ${email && !isEmailValid(email) ? "#8a4b4b" : "rgba(255,255,255,0.2)"}`, borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
                 <Mail size={15} color={GOLD} />
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tucorreo@ejemplo.com" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value.slice(0, 254))} autoComplete="email" placeholder="tucorreo@ejemplo.com" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
               </div>
+              {email && !isEmailValid(email) && (
+                <span style={{ color: "#f2a6a6", fontSize: 11.5, display: "block", marginTop: 4 }}>Ese correo no parece válido.</span>
+              )}
             </label>
           </div>
-          <button disabled={!name || !phone || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
+          <button disabled={!name.trim() || !isPhoneValid(phone) || !isEmailValid(email) || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
             {submitting ? "Comprobando disponibilidad…" : "Confirmar cita"}
           </button>
         </div>
@@ -1097,9 +1185,10 @@ function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, waitlist, set
         No quedan huecos disponibles este día para este servicio. Puedes apuntarte a la lista de espera y te avisamos si se libera algo.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" style={inputStyle} />
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Tu teléfono" style={inputStyle} />
-        <button onClick={join} disabled={!name || !phone} className="gold-btn" style={{ padding: 11, borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: name && phone ? "pointer" : "not-allowed", opacity: name && phone ? 1 : 0.5 }}>
+        <input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} placeholder="Tu nombre" style={inputStyle} />
+        <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" placeholder="Tu teléfono" style={inputStyle} />
+        {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
+        <button onClick={join} disabled={!name.trim() || !isPhoneValid(phone)} className="gold-btn" style={{ padding: 11, borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: name.trim() && isPhoneValid(phone) ? "pointer" : "not-allowed", opacity: name.trim() && isPhoneValid(phone) ? 1 : 0.5 }}>
           Unirme a la lista de espera
         </button>
       </div>
@@ -1118,7 +1207,7 @@ function Row({ label, value }) {
 
 /* ===================== MIS CITAS ===================== */
 
-function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppointments, commitAppointments }) {
+function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppointments, cancelAppointment }) {
   const [phone, setPhone] = useState("");
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState([]);
@@ -1135,8 +1224,12 @@ function MisCitas({ appointments, services, barbers, blockedRanges, refreshAppoi
   }
 
   async function cancelarCita(appt) {
-    const latest = await refreshAppointments();
-    await commitAppointments(latest.filter((a) => a.id !== appt.id));
+    try {
+      await cancelAppointment(appt.id);
+    } catch (e) {
+      window.alert(`No se ha podido cancelar: ${e.message}`);
+      return;
+    }
     setCancelledIds((prev) => ({ ...prev, [appt.id]: true }));
     if (BARBER_EMAIL) {
       const svc = services.find((s) => s.id === appt.service);
@@ -1261,7 +1354,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, commitAppointments, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule }) {
   const [authed, setAuthed] = useState(false);
 
   const [tab, setTab] = useState("dia"); // dia | semana | mes | clientes | ajustes
@@ -1339,7 +1432,12 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
 
   async function cancelAppt(id) {
     const appt = appointments.find((a) => a.id === id);
-    await commitAppointments(appointments.filter((a) => a.id !== id));
+    try {
+      await cancelAppointment(id);
+    } catch (e) {
+      window.alert(`No se ha podido cancelar: ${e.message}`);
+      return;
+    }
     setSelectedAppt(null);
     if (appt && appt.email) {
       const svc = services.find((s) => s.id === appt.service);
@@ -1352,8 +1450,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   }
 
   async function toggleNoShow(id) {
-    await commitAppointments(appointments.map((a) => (a.id === id ? { ...a, noShow: !a.noShow } : a)));
-    setSelectedAppt((prev) => (prev && prev.id === id ? { ...prev, noShow: !prev.noShow } : prev));
+    const current = appointments.find((a) => a.id === id);
+    try {
+      const updated = await setAppointmentNoShow(id, !(current && current.noShow));
+      setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
+    } catch (e) {
+      window.alert(`No se ha podido guardar: ${e.message}`);
+    }
   }
 
   function removeWaitlistEntry(id) {
@@ -1361,8 +1464,14 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   }
 
   async function addManualAppt(data) {
-    const svc = services.find((s) => s.id === data.service);
-    await commitAppointments([...appointments, { id: "m" + Date.now(), duration: svc?.duration || 30, price: svc?.price || 0, ...data }]);
+    try {
+      await createAppointment(data);
+    } catch (e) {
+      // Si el hueco ya está ocupado lo dice la base de datos, no una
+      // comprobación que se puede colar.
+      window.alert(`No se ha podido crear la cita: ${e.message}`);
+      return;
+    }
     setShowAdd(false);
   }
 
@@ -1985,8 +2094,11 @@ function AddApptModal({ services, barbers, onClose, onSave }) {
   const [barberId, setBarberId] = useState(barbers[0]?.id);
   return (
     <ModalShell title="Añadir cita manual" onClose={onClose}>
-      <FormField label="Nombre"><input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Teléfono"><input value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} /></FormField>
+      <FormField label="Nombre"><input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} style={inputStyle} /></FormField>
+      <FormField label="Teléfono">
+        <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" style={inputStyle} />
+        {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
+      </FormField>
       <FormField label="Fecha"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} /></FormField>
       <FormField label="Hora"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} /></FormField>
       <FormField label="Servicio">
@@ -2001,7 +2113,7 @@ function AddApptModal({ services, barbers, onClose, onSave }) {
           </select>
         </FormField>
       )}
-      <button disabled={!name || !phone} onClick={() => onSave({ dateKey: date, time, service, barberId, name, phone })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: name && phone ? 1 : 0.5 }}>Guardar cita</button>
+      <button disabled={!name.trim() || !isPhoneValid(phone)} onClick={() => onSave({ dateKey: date, time, service, barberId, name, phone })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: name.trim() && isPhoneValid(phone) ? 1 : 0.5 }}>Guardar cita</button>
     </ModalShell>
   );
 }
