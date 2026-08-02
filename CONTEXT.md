@@ -15,10 +15,8 @@ acceptance criteria on every change from here on:
 - **"Que la web se vea"** — the address opens and shows the barbershop, even if booking
   is broken.
 
-The first one used to bind hardest against the app's own design: a save rewrote a whole
-JSON blob, so two people booking at once lost one of the bookings. Since the Supabase
-migration (2 Aug 2026) Postgres refuses overlapping appointments outright. Read `ADR.md`
-before touching anything that writes.
+The first one used to bind hardest: two people booking at once lost one of the bookings.
+Postgres now refuses overlapping appointments outright. Read `ADR.md` before writing.
 
 ## What this is
 
@@ -26,6 +24,10 @@ before touching anything that writes.
   50003 Zaragoza, Spain. One barber, "Félix".
 - Customers pick a service, a day and a time, and leave a name and a phone number. They
   can look their own bookings up again and cancel them.
+- Picking a time holds it for 5 minutes while the customer fills in their details, with a
+  visible countdown. For everyone else that hour disappears, and comes back on its own if
+  nobody confirms. Félix's panel is bound by the same holds — his own choice, made knowing
+  he may have to wait up to five minutes to write a booking in by hand.
 - Félix uses the same site's admin panel to see the day, add bookings by hand, block time
   off, set holidays and holidays-of-obligation, manage the waiting list and the photo
   gallery, and change opening hours.
