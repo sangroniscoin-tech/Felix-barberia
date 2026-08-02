@@ -5,15 +5,20 @@
 // usuario, así que no compensa complicarlo — y mantenerlo igual hace que el
 // cambio a Supabase no toque la lógica del panel.
 //
-// OJO: este endpoint no pide contraseña, igual que hoy no la pide la URL de
-// Apps Script. La comprobación del panel vive en el navegador y por tanto es
-// pública. Ahora que existe un servidor eso se puede arreglar de verdad, pero
-// es una petición aparte: aquí solo se mantiene el comportamiento actual.
+// Este endpoint EXIGE identificarse. Antes no pedía nada: quien encontrase la
+// dirección podía cambiar precios, servicios, horarios, festivos y vacaciones
+// sin pasar por el panel siquiera. La comprobación se hace arriba del todo,
+// antes de leer el cuerpo, para que nada de lo que mande un desconocido llegue
+// a interpretarse.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { cleanName, cleanPhone, isValidPhone } from "./_lib/shape.js";
+import { requireAdmin } from "./_lib/adminAuth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
+
+  const denied = requireAdmin(req);
+  if (denied) return res.status(denied.status).json(denied.body);
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const { collection, items } = body;
