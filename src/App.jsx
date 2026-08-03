@@ -2524,6 +2524,24 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   const weekLost = useMemo(() => weekAppts.reduce((sum, a) => sum + (a.noShow ? apptPrice(a) : 0), 0), [weekAppts, services]);
   const monthLost = useMemo(() => monthAppts.reduce((sum, a) => sum + (a.noShow ? apptPrice(a) : 0), 0), [monthAppts, services]);
 
+  // La hora actual, refrescada cada minuto. Es lo que decide qué citas del día
+  // ya llevan los botones de "vino / no vino": sin este latido no aparecerían
+  // hasta que algo más volviera a pintar el panel, y Félix puede tener la
+  // lista de hoy abierta encima del mostrador durante horas.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Contra la hora de inicio, no contra el final: si eran las 16:30 y son las
+  // 16:35, ya se sabe si esa persona apareció. Lleva el día dentro a propósito
+  // —la lista navega por fechas— así que un día pasado tiene todas sus citas
+  // pasadas y uno futuro no tiene ninguna.
+  function hasPassed(a) {
+    return new Date(`${a.dateKey}T${a.time}`).getTime() <= now;
+  }
+
   const searchResults = search.length > 0
     ? appointments.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()) || a.phone.includes(search))
     : [];
@@ -2585,15 +2603,27 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     }
   }
 
-  async function toggleNoShow(id) {
-    const current = appointments.find((a) => a.id === id);
+  // Un único camino para marcar si vino o no, lo pidan la ficha o la lista del
+  // día. `value` es el estado destino, no un cambio: los dos botones de la
+  // lista son destinos ("ponlo en ausente", "ponlo en vino"), y un interruptor
+  // que alterna se dispara solo con rozarlo dos veces. La ficha, que sí es un
+  // interruptor, calcula su destino antes de llamar.
+  //
+  // El refresco de después es lo que recalcula las cifras de dinero, así que
+  // da igual por dónde se marque: las dos vías acaban en el mismo sitio.
+  async function setNoShow(id, value) {
     try {
-      const updated = await setAppointmentNoShow(id, !(current && current.noShow));
+      const updated = await setAppointmentNoShow(id, value);
       setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
       await refreshAppointments();
     } catch (e) {
       window.alert(`No se ha podido guardar: ${e.message}`);
     }
+  }
+
+  async function toggleNoShow(id) {
+    const current = appointments.find((a) => a.id === id);
+    await setNoShow(id, !(current && current.noShow));
   }
 
   function removeWaitlistEntry(id) {
@@ -2710,7 +2740,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   </LoadingRegion>
                 ) : apptsForDate(cursorDate).length === 0 ? (
                   <EmptyState text="Sin citas este día." />
-                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
+                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} />)}
               </div>
               {/* Sin servicios no se puede apuntar una cita: la ventana arranca
                   eligiendo el primero de la lista. Antes esa lista nunca estaba
@@ -3187,18 +3217,77 @@ function GroupTag({ a, groupSize }) {
   );
 }
 
-function ApptRow({ a, services, barbers, onClick, groupSize }) {
+// Una cita en la lista del día.
+//
+// La fila era un `button` entero que abría la ficha. Ya no puede serlo: los
+// dos botones de "vino / no vino" van dentro, y un botón no puede contener
+// otros botones — el marcado es inválido y el clic de dentro dispara también
+// el de fuera. Ahora la tarjeta es un `div`, y la zona que abre la ficha y los
+// dos botones son hermanos.
+function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }) {
   const s = services.find((x) => x.id === a.service);
   const b = barbers?.find((x) => x.id === a.barberId);
+  const [saving, setSaving] = useState(false);
+
+  // Pulsar el estado que la cita ya tiene no hace nada: si no, los dos botones
+  // se convierten en un interruptor que se dispara con rozarlo dos veces.
+  async function mark(value) {
+    if (saving || a.noShow === value) return;
+    setSaving(true);
+    try {
+      await onSetNoShow(value);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const markBtn = (label, value) => {
+    const activo = a.noShow === value;
+    return (
+      <button
+        onClick={() => mark(value)}
+        disabled={saving}
+        aria-pressed={activo}
+        className={activo ? undefined : "ghost-btn"}
+        style={{
+          flex: 1, padding: "8px 6px", borderRadius: 8, fontSize: 12, fontWeight: activo ? 700 : 500,
+          cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1,
+          ...(activo
+            ? value
+              // El ausente marcado, en el mismo rojo que ya usa el resto del panel.
+              ? { background: "rgba(224,160,160,0.16)", border: "1px solid #6b2323", color: "#e0a0a0" }
+              : { background: "rgba(201,162,39,0.16)", border: `1px solid ${GOLD}`, color: GOLD }
+            : null),
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
   return (
-    <button onClick={onClick} className="card" style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: 12, borderRadius: 10, marginBottom: 8, cursor: "pointer", opacity: a.noShow ? 0.6 : 1 }}>
-      <div style={{ fontWeight: 700, fontSize: 13, color: GOLD, minWidth: 46 }}>{a.time}</div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.name}<GroupTag a={a} groupSize={groupSize} />{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
-        <div style={{ fontSize: 11.5, color: SMOKE }}>{s?.name} · {s?.duration} min · {s?.price}€{b && barbers.length > 1 ? ` · ${b.name}` : ""}</div>
-      </div>
-      <div style={{ fontSize: 11, color: SMOKE }}>{a.phone}</div>
-    </button>
+    <div className="card" style={{ borderRadius: 10, marginBottom: 8, opacity: a.noShow ? 0.6 : 1 }}>
+      <button
+        onClick={onClick}
+        style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: 12, background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer" }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 13, color: GOLD, minWidth: 46 }}>{a.time}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.name}<GroupTag a={a} groupSize={groupSize} />{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
+          <div style={{ fontSize: 11.5, color: SMOKE }}>{s?.name} · {s?.duration} min · {s?.price}€{b && barbers.length > 1 ? ` · ${b.name}` : ""}</div>
+        </div>
+        <div style={{ fontSize: 11, color: SMOKE }}>{a.phone}</div>
+      </button>
+      {/* Solo en las citas cuya hora ya pasó. Marcar como ausente a alguien que
+          todavía puede llegar no significa nada, y llenaría de botones justo la
+          parte que Félix mira para saber quién viene ahora. */}
+      {past && (
+        <div style={{ display: "flex", gap: 6, padding: "0 12px 10px" }}>
+          {markBtn("Vino", false)}
+          {markBtn("No vino", true)}
+        </div>
+      )}
+    </div>
   );
 }
 
