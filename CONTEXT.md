@@ -15,9 +15,6 @@ acceptance criteria on every change from here on:
 - **"Que la web se vea"** — the address opens and shows the barbershop, even if booking
   is broken.
 
-The first one used to bind hardest: two people booking at once lost one of the bookings.
-Postgres now refuses overlapping appointments outright.
-
 ## What this is
 
 - A booking app for **Félix Barbería**, a one-chair barbershop at Calle Cereros 22,
@@ -41,6 +38,11 @@ Postgres now refuses overlapping appointments outright.
   by one. That mark is what makes the takings real: an absence is worth €0 and shows up
   beside them as "perdido por ausencias", which is the only place he sees what the
   no-shows cost him.
+- **His phone rings when a customer books or cancels** — not when he writes a booking in
+  himself, which he already knows about. The notice says only the day, the hour and the
+  service, because it lands on a lock screen; tapping it opens the panel on that day with
+  that person's card, which is where the name and the phone live. A cancellation shows him
+  who cancelled, so he can ring them back.
 - Everything is in Spanish, for customers in Zaragoza. It is installable as a phone app
   (PWA) and is used mostly on phones.
 - Services and prices live in the data store, not the code, and Félix can change them
