@@ -27,8 +27,8 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
 - **A booking can be for up to 3 people** — a father and his son. Each picks their own
   service and gives their own name; one phone for the lot. They are seen back to back, so
   only times where the whole group fits are offered, and the whole reservation can be
-  cancelled at once or one person taken out of it. Félix's panel cannot yet take one by
-  hand — that is #20, still open.
+  cancelled at once or one person taken out of it. Félix takes those by phone from his own
+  panel, where the limit is 5 rather than 3: he knows what fits in his day.
 - Picking a time holds it for 5 minutes while the customer fills in their details, with a
   visible countdown. For everyone else that hour disappears, and comes back on its own if
   nobody confirms. Félix's panel is bound by the same holds — his own choice, made knowing
