@@ -136,6 +136,15 @@ function fmtCountdown(ms) {
 function dateKey(d) {
   return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
 }
+// El camino de vuelta de dateKey: "2026-08-03" → una fecha local. Se construye
+// campo a campo a propósito; new Date("2026-08-03") la lee como UTC y según el
+// huso puede caer en el día de antes.
+function dateFromKey(k) {
+  if (typeof k !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(k)) return null;
+  const [y, m, d] = k.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dateKey(dt) === k ? dt : null;
+}
 function fmtLong(d) {
   return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES[d.getMonth()]}`;
 }
@@ -695,7 +704,7 @@ export default function FelixBarberiaApp() {
         {view === "galeria" && <Galeria portfolio={portfolio} barbers={barbers} />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -1089,6 +1098,36 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
     }
   }
   return slots;
+}
+
+// Por qué una hora escrita a mano no está entre los huecos que se ofrecen.
+// Es un AVISO para Félix, nunca un cerrojo: devuelve un texto que explicar, y
+// quien decide de verdad si dos citas se pisan sigue siendo la restricción de
+// exclusión de Postgres cuando se guarda. Mira los mismos datos que
+// `computeAvailableSlots`, no calcula disponibilidad por su cuenta.
+function manualTimeReason({ dateObj, time, durationMin, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule }) {
+  const k = dateKey(dateObj);
+  if (blockedDays.includes(k)) return "ese día lo tienes bloqueado en la agenda";
+  if (festivos.includes(k)) return "ese día es festivo";
+  for (const r of vacationRanges) {
+    if (k >= r.start && k <= r.end) return "ese día caes de vacaciones";
+  }
+  const blocks = schedule[dateObj.getDay()] || [];
+  if (blocks.length === 0) return "ese día la barbería está cerrada";
+
+  const start = toMin(time);
+  const end = start + durationMin;
+  const appt = appointments.find((a) => a.dateKey === k && a.barberId === barberId &&
+    start < toMin(a.time) + (a.duration || 30) && toMin(a.time) < end);
+  if (appt) return `pisa la cita de las ${appt.time}`;
+  const br = blockedRanges.find((b) => b.dateKey === k && start < toMin(b.end) && toMin(b.start) < end);
+  if (br) return `pisa una hora que bloqueaste (${br.start}–${br.end})`;
+
+  const dentro = blocks.some(([s, e]) => start >= toMin(s) && end <= toMin(e));
+  if (!dentro) return "se sale de tu horario de ese día";
+  const now = new Date();
+  if (k === dateKey(now) && start <= now.getHours() * 60 + now.getMinutes()) return "esa hora ya ha pasado hoy";
+  return "no cae en uno de los huecos que se ofrecen, aunque está libre";
 }
 
 // El tope de personas por reserva. Aquí es comodidad: quien de verdad manda es
@@ -2176,7 +2215,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2597,7 +2636,19 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       )}
 
       {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
-      {showAdd && services.length > 0 && <AddApptModal services={services} barbers={barbers} holds={holds} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
+      {/* El modal recibe la agenda tal cual la tiene el panel: los huecos se
+          calculan con lo que ya está cargado, sin volver a pedir nada. Para
+          saberlos hacen falta las dos cargas: el horario y los días cerrados
+          vienen de /api/bootstrap (`loaded`) y las citas de /api/admin-data
+          (`dataLoaded`). Con una sola, una lista vacía mentiría. */}
+      {showAdd && services.length > 0 && (
+        <AddApptModal
+          services={services} barbers={barbers} holds={holds}
+          appointments={appointments} blockedRanges={blockedRanges} blockedDays={blockedDays}
+          festivos={festivos} vacationRanges={vacationRanges} schedule={schedule}
+          dataLoaded={loaded && dataLoaded}
+          onClose={() => setShowAdd(false)} onSave={addManualAppt} />
+      )}
       {showBlock && <BlockHourModal onClose={() => setShowBlock(false)} onSave={blockRange} />}
       {showVacation && <VacationModal onClose={() => setShowVacation(false)} onSave={addVacation} />}
     </div>
@@ -3018,7 +3069,7 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
 // servidor, que solo sube el tope si la petición trae un pase válido.
 const MAX_PERSONAS_PANEL = 5;
 
-function AddApptModal({ services, barbers, holds, onClose, onSave }) {
+function AddApptModal({ services, barbers, holds, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, dataLoaded, onClose, onSave }) {
   // Una persona por fila, con su servicio y su nombre. El nombre de quien llama
   // se repite en todas: Félix escribe "Juan" una vez y solo cambia el que sea
   // distinto, en vez de teclear cinco veces con el teléfono en la oreja.
@@ -3072,6 +3123,26 @@ function AddApptModal({ services, barbers, holds, onClose, onSave }) {
     setPeople((prev) => prev.map((p, idx) => (idx === i ? { ...p, [campo]: v } : p)));
   }
 
+  // Los huecos libres del día, con el MISMO cálculo que ve el cliente. No se
+  // memoriza a propósito: así se rehace solo al cambiar el día, el barbero, un
+  // servicio o cuántas personas son, y también cuando caduca una reserva
+  // temporal (el reloj de arriba repinta cada segundo).
+  // Es una CORTESÍA, no la garantía: si alguien se adelanta, quien lo impide es
+  // la restricción de exclusión de Postgres y el error se le enseña a Félix.
+  const dateObj = dateFromKey(date);
+  // Sin datos cargados no se sabe nada: una lista vacía significaría "todavía
+  // no se sabe", jamás "no queda ningún hueco".
+  const huecosSabidos = dataLoaded && !!dateObj && totalDuration > 0;
+  const slots = huecosSabidos
+    ? computeAvailableSlots({ date: dateObj, durationMin: totalDuration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds })
+    : [];
+
+  // Una hora tecleada que no está entre los huecos se avisa, con el motivo, y
+  // aun así se deja guardar: Félix es el dueño y a veces cuela a alguien.
+  const motivoManual = huecosSabidos && isValidTimeText(time) && !slots.includes(time)
+    ? manualTimeReason({ dateObj, time, durationMin: totalDuration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule })
+    : null;
+
   const held = isValidTimeText(time)
     ? holdCovering(holds, date, barberId, time, totalDuration)
     : null;
@@ -3095,7 +3166,43 @@ function AddApptModal({ services, barbers, holds, onClose, onSave }) {
         {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
       </FormField>
       <FormField label="Fecha"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Hora"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} /></FormField>
+
+      {/* Los huecos libres del día, para elegir a un toque. Es la misma
+          información que ya ve el cliente, enseñada donde Félix la necesita. */}
+      <FormField label={grupo ? `Huecos libres (donde caben las ${partySize} seguidas)` : "Huecos libres"}>
+        {!dataLoaded ? (
+          <div style={{ fontSize: 12.5, color: SMOKE }}>Cargando la agenda…</div>
+        ) : !dateObj ? (
+          <div style={{ fontSize: 12.5, color: SMOKE }}>Elige primero un día.</div>
+        ) : huecosSabidos && slots.length === 0 ? (
+          <div className="card" style={{ padding: 10, borderRadius: 10, fontSize: 12.5, color: SMOKE }}>
+            No queda ningún hueco libre el {fmtLong(dateObj)} para {totalDuration} min seguidos.
+            Puedes escribir la hora a mano aquí abajo.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            {slots.map((t) => {
+              const active = time === t;
+              return (
+                <button key={t} onClick={() => setTime(t)} style={{
+                  padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                  border: active ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,0.15)",
+                  background: active ? GOLD : "#161513", color: active ? "#111111" : BONE,
+                }}>{t}</button>
+              );
+            })}
+          </div>
+        )}
+      </FormField>
+
+      <FormField label="Hora (o escríbela a mano)">
+        <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} />
+        {motivoManual && (
+          <span style={{ display: "block", color: "#f2d9a6", fontSize: 11.5, marginTop: 4 }}>
+            Ojo: {motivoManual}. Puedes guardarla igual si quieres.
+          </span>
+        )}
+      </FormField>
 
       <FormField label="¿Cuántas personas?">
         <div style={{ display: "flex", gap: 6 }}>
