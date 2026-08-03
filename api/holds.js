@@ -12,6 +12,7 @@ import { isValidDateKey, isValidTime, holdOut } from "./_lib/shape.js";
 import {
   HOLD_MINUTES, purgeExpiredHolds, conflictingHold, conflictingAppointment,
 } from "./_lib/holds.js";
+import { readServiceIds } from "./_lib/groups.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -31,8 +32,13 @@ export default async function handler(req, res) {
 
     const dateKey = body.dateKey;
     const time = body.time;
-    const serviceId = body.service;
     const barberId = body.barberId || "felix";
+
+    // Un servicio, o los de todo el grupo. Con varios se guarda el TRAMO
+    // ENTERO, no solo el de la primera persona: si no, alguien podría colarse
+    // en la hora de la segunda mientras el cliente rellena sus datos.
+    const wanted = readServiceIds(body);
+    if (wanted.error) return bad(res, wanted.error.message, wanted.error.field);
 
     if (!isValidDateKey(dateKey)) return bad(res, "Falta el día.", "dateKey");
     if (!isValidTime(time)) return bad(res, "Falta la hora.", "time");
@@ -44,15 +50,22 @@ export default async function handler(req, res) {
 
       // La duración la pone el servidor leyéndola de services, igual que al
       // crear una cita. Nunca se acepta la que mande el navegador.
-      const { data: service, error: svcErr } = await supabase
-        .from("services").select("*").eq("id", serviceId).eq("active", true).single();
-      if (svcErr || !service) return bad(res, "Ese servicio no existe.", "service");
+      const { data: svcRows, error: svcErr } = await supabase
+        .from("services").select("*").in("id", [...new Set(wanted.ids)]).eq("active", true);
+      if (svcErr) throw new Error(svcErr.message);
+
+      const byId = new Map((svcRows || []).map((s) => [s.id, s]));
+      for (const id of wanted.ids) {
+        if (!byId.has(id)) return bad(res, "Ese servicio no existe.", "service");
+      }
 
       const { data: barber } = await supabase
         .from("barbers").select("id").eq("id", barberId).eq("active", true).single();
       if (!barber) return bad(res, "Ese barbero no existe.", "barberId");
 
-      const durationMinutes = service.duration_minutes;
+      // El tramo del grupo es la suma de las duraciones, porque las personas
+      // van seguidas, una detrás de otra.
+      const durationMinutes = wanted.ids.reduce((sum, id) => sum + byId.get(id).duration_minutes, 0);
 
       // Si la hora ya está ocupada por una cita de verdad, no tiene sentido
       // guardarla: quien la pide vería una cuenta atrás sobre nada.

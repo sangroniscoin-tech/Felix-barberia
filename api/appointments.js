@@ -5,10 +5,11 @@
 // cliente, no una garantía. Cualquiera puede saltársela.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import {
-  appointmentOut, cleanName, cleanPhone, cleanEmail,
+  appointmentOut, cleanPhone, cleanEmail,
   isValidPhone, isValidEmail, isValidDateKey, isValidTime,
 } from "./_lib/shape.js";
 import { conflictingHold } from "./_lib/holds.js";
+import { readPeople, chainTimes, newGroupId } from "./_lib/groups.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -22,23 +23,32 @@ export default async function handler(req, res) {
     return fail(res, e);
   }
 
-  // ---------- Crear una cita ----------
+  // ---------- Crear una cita, o un grupo de hasta tres ----------
   if (req.method === "POST") {
     const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
 
-    const name = cleanName(body.name);
     const phone = cleanPhone(body.phone);
     const email = cleanEmail(body.email);
     const dateKey = body.dateKey;
     const time = body.time;
-    const serviceId = body.service;
     const barberId = body.barberId || "felix";
     // Opcional: la reserva temporal que esta persona tiene sobre esta hora.
     // El panel de Félix crea la cita SIN holdId, que es justo lo que hace que
     // le afecten las reservas temporales de quien está reservando por la web.
     const holdId = typeof body.holdId === "string" && body.holdId ? body.holdId : null;
 
-    if (!name) return bad(res, "Falta el nombre.", "name");
+    // Una persona o varias. Un solo teléfono y un solo correo para toda la
+    // reserva: los de quien reserva. Un nombre por persona.
+    const parsed = readPeople(body);
+    if (parsed.error) return bad(res, parsed.error.message, parsed.error.field);
+    const people = parsed.people;
+    const grouped = people.length > 1;
+
+    for (let i = 0; i < people.length; i++) {
+      if (!people[i].name) {
+        return bad(res, grouped ? `Falta el nombre de la persona ${i + 1}.` : "Falta el nombre.", "name");
+      }
+    }
     if (!isValidPhone(phone)) {
       return bad(res, "El teléfono no parece válido. Escribe al menos 9 dígitos, sin espacios ni letras.", "phone");
     }
@@ -47,53 +57,78 @@ export default async function handler(req, res) {
     if (!isValidTime(time)) return bad(res, "Falta la hora de la cita.", "time");
 
     try {
-      // La duración y el precio se toman del servicio en el servidor, no de lo
-      // que mande el navegador: si no, cualquiera podría reservar 5 minutos a 0 €.
-      const { data: service, error: svcErr } = await supabase
-        .from("services").select("*").eq("id", serviceId).eq("active", true).single();
-      if (svcErr || !service) return bad(res, "Ese servicio no existe.", "service");
+      // La duración y el precio se toman de los servicios en el servidor, no de
+      // lo que mande el navegador: si no, cualquiera podría reservar 5 minutos
+      // a 0 €. Y las horas de cada persona se encadenan aquí por lo mismo.
+      const wanted = [...new Set(people.map((p) => p.service))];
+      const { data: svcRows, error: svcErr } = await supabase
+        .from("services").select("*").in("id", wanted).eq("active", true);
+      if (svcErr) throw new Error(svcErr.message);
+
+      const byId = new Map((svcRows || []).map((s) => [s.id, s]));
+      for (const p of people) {
+        if (!byId.has(p.service)) return bad(res, "Ese servicio no existe.", "service");
+      }
+      const chosen = people.map((p) => byId.get(p.service));
 
       const { data: barber } = await supabase
         .from("barbers").select("id").eq("id", barberId).eq("active", true).single();
       if (!barber) return bad(res, "Ese barbero no existe.", "barberId");
 
-      // ¿Hay alguien rellenando sus datos sobre esta hora ahora mismo? La
+      const chain = chainTimes(time, chosen.map((s) => s.duration_minutes));
+      if (chain.error) return bad(res, chain.error.message, "time");
+      const { starts, totalMinutes } = chain;
+
+      // ¿Hay alguien rellenando sus datos sobre estas horas ahora mismo? Se
+      // mira el TRAMO ENTERO del grupo, no solo el de la primera persona. La
       // reserva temporal propia (la del holdId recibido) no cuenta: si contase,
       // nadie podría confirmar la cita que acaba de reservarse la hora.
       const held = await conflictingHold(supabase, {
         barberId: barber.id,
         dateKey,
         time,
-        durationMinutes: service.duration_minutes,
+        durationMinutes: totalMinutes,
         exceptId: holdId,
       });
       if (held) {
         return res.status(409).json({
           ok: false,
           reason: "slot_held",
-          message: "Alguien está reservando esa hora ahora mismo. Se libera en unos minutos.",
+          message: grouped
+            ? "Alguien está reservando una de esas horas ahora mismo. Se libera en unos minutos."
+            : "Alguien está reservando esa hora ahora mismo. Se libera en unos minutos.",
         });
       }
 
-      const row = {
-        id: `c${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      // Un grupo deja su marca; una cita suelta va con las dos columnas a NULL,
+      // que es lo que son casi todas las que hay.
+      const groupId = grouped ? newGroupId() : null;
+      const stamp = Date.now();
+      const rows = people.map((p, i) => ({
+        id: `c${stamp}${i}${Math.floor(Math.random() * 1000)}`,
         appointment_date: dateKey,
-        start_time: time,
-        service_id: service.id,
+        start_time: starts[i],
+        service_id: chosen[i].id,
         barber_id: barber.id,
-        customer_name: name,
+        customer_name: p.name,
         customer_phone: phone,
         customer_email: email,
-        duration_minutes: service.duration_minutes,
-        price: service.price,
+        duration_minutes: chosen[i].duration_minutes,
+        price: chosen[i].price,
         status: "booked",
         source: "web",
-        raw_name: body.name ?? null,
+        raw_name: p.rawName,
         raw_phone: body.phone != null ? String(body.phone) : null,
         raw_email: body.email ?? null,
-      };
+        group_id: groupId,
+        group_position: grouped ? i + 1 : null,
+      }));
 
-      const { data, error } = await supabase.from("appointments").insert(row).select().single();
+      // TODAS las filas en un solo insert: o entran todas o no entra ninguna.
+      // Si la restricción de solapamiento rechaza una, Postgres tira la
+      // sentencia entera. Insertarlas de una en una dejaría media reserva
+      // hecha, y a alguien plantado en la puerta creyendo que venían dos.
+      const { data, error } = await supabase.from("appointments").insert(rows).select();
 
       if (error) {
         // 23P01 = lo rechazó la restricción de solapamiento: alguien cogió el
@@ -102,7 +137,9 @@ export default async function handler(req, res) {
           return res.status(409).json({
             ok: false,
             reason: "slot_taken",
-            message: "Justo han cogido esa hora. Elige otra, por favor.",
+            message: grouped
+              ? "Justo han cogido una de esas horas y ya no cabéis seguidos. No se ha guardado ninguna cita: elige otro rato, por favor."
+              : "Justo han cogido esa hora. Elige otra, por favor.",
           });
         }
         throw new Error(error.message);
@@ -118,7 +155,10 @@ export default async function handler(req, res) {
         }
       }
 
-      return res.status(201).json({ ok: true, appointment: appointmentOut(data) });
+      const out = (data || []).map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
+      // `appointment` en singular sigue siendo la primera: es lo que espera
+      // todo lo que ya llamaba a esta ruta antes de que existieran los grupos.
+      return res.status(201).json({ ok: true, appointment: out[0], appointments: out });
     } catch (e) {
       return fail(res, e);
     }
@@ -129,6 +169,29 @@ export default async function handler(req, res) {
   // de que existió. Una cita borrada no se puede explicar tres meses después.
   if (req.method === "DELETE" || req.method === "PATCH") {
     const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+
+    // Con groupId se anula la reserva entera de una vez: todas las citas de ese
+    // grupo que sigan en pie. Con id se anula una sola persona y las demás se
+    // quedan con su hora — a nadie se le adelanta la suya.
+    const groupId = body.groupId || (req.query && req.query.groupId);
+    if (groupId) {
+      try {
+        const { data, error } = await supabase
+          .from("appointments")
+          .update({ status: "cancelled" })
+          .eq("group_id", groupId)
+          .eq("status", "booked")
+          .select();
+        if (error) throw new Error(error.message);
+        if (!data || data.length === 0) {
+          return res.status(404).json({ ok: false, reason: "not_found", message: "Esa reserva ya no existe." });
+        }
+        return res.status(200).json({ ok: true, appointments: data.map(appointmentOut) });
+      } catch (e) {
+        return fail(res, e);
+      }
+    }
+
     const id = body.id || (req.query && req.query.id);
     if (!id) return bad(res, "Falta el identificador de la cita.", "id");
 
