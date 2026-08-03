@@ -57,14 +57,11 @@ endorsement.
   15 €/10 €/22 € for half a second before the real prices arrived.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
-- Apps Script survives **only** to send the email notice, and no agent can reach it: any
-  change there is a click-by-click procedure for the client. **It does not actually send
-  anything.** Its `doPost` answers `{"ok":true}` to every action, including invented ones,
-  so `notify` was never implemented — and `sendNotification` swallows errors on purpose, so
-  both sides hid the failure. Never read an `ok` from that endpoint as proof of anything
-  (#40). If it is ever fixed, the destination must be **fixed inside the script**: the
-  script URL ships in the browser bundle and the `to` travels in the request, so honouring
-  it turns Félix's Gmail into an open relay.
+- **Nothing calls Google any more.** The email notice never worked — the Apps Script's
+  `doPost` answered `{"ok":true}` to every action and never implemented `notify` (#40) —
+  and waiting on it cost up to 10 s per booking, so the call was removed (#53). The script
+  is still deployed and no agent can reach it; leave it closed and quiet. Félix is told by
+  Web Push, which is a browser standard with no account and no dashboard behind it.
 - The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
   It was found **in the trash** during the migration; restoring it is the only reason the
   data survived. Never write to it, never delete it, never let it be trashed again.
@@ -83,12 +80,23 @@ endorsement.
   phone** — client lists, both rankings. They must filter those rows out or they collapse
   into one phantom client; they stay in the money and the counts, where they represent
   nobody. Anything new that keys on `phone` inherits this.
-- `BARBER_EMAIL` carries the shop's address, so every booking and cancellation **tries** to
-  send the customer's name and phone to a Gmail inbox — a route out of the database the
-  privacy notice describes. Nothing arrives today (entry above), but the notice is written
-  for the intended behaviour and stays correct the day it works; don't "fix" it by deleting
-  the clause. It is a business address, public like the responsible-party block, not a
-  credential.
+- **The published privacy notice still names Gmail as a recipient**, which stopped being
+  true with #53: no data leaves for Google at all now. It over-discloses rather than
+  under-discloses, so it is not urgent — but it is a legal document describing a route that
+  no longer exists, and correcting it is its own issue, never a drive-by edit.
+- **The notification takes Félix to the person, and travels without an id.** The push `url`
+  carries `?aviso=reserva|cancelada&dia=&hora=` — day and time, which the notice's own text
+  already shows on the lock screen; **never the appointment id**, which is a cancellable
+  booking to anyone holding it. The destination survives the password screen and is applied
+  only once the panel has its appointments, or it would decide "not there" against a list
+  that hasn't arrived. The service worker **navigates** an open window before focusing it:
+  focusing alone leaves it wherever it was, which is what made the notice a dead end.
+- **Cancelled appointments are visible one day at a time and nowhere else.**
+  `/api/admin-data?canceladas=<day>` serves them in their own array, only for that day, only
+  behind the admin key. They never join `appointments`, so they stay out of the agenda, the
+  search, the money, the counts and both rankings — that exclusion is what keeps the takings
+  honest. Their card is read-only. `cancelled_at` is what breaks the tie between two
+  cancellations in the same slot; it is `NULL` for everything cancelled before #54.
 - **Money counts what was collected, not what was booked.** A `no_show` appointment is
   worth zero in every money figure; the appointment *counts* still include it, because the
   slot was occupied and could not be resold. The default is "came" — nothing is confirmed

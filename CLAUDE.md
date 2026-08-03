@@ -84,9 +84,13 @@ and never committed.
 ```
 Browser (React SPA)  ──fetch /api/*──►  Vercel Functions  ──service_role──►  Supabase
 (no credentials)                        (api/, server-side)                  (RLS on, no policies)
-   │
-   └── fetch POST {action:"notify"} ──► Apps Script ──► Gmail   (only for the email notice)
+                                             │
+                                             └── Web Push ──► Félix's phone
+                                                 (day/hour/service only; taps
+                                                  through to that person's card)
 ```
+
+The browser no longer calls Google at all: that leg was removed in #53.
 
 - `api/` — the server. `_lib/supabase.js` is the **only** place credentials are read; it
   never enters the browser bundle. `bootstrap.js` (everything the app needs on load),
@@ -158,7 +162,7 @@ The first two are read **only** by `api/_lib/supabase.js` and the third **only**
 — a Vite SPA ships everything it reads to the browser.
 
 Still public constants at the top of `src/App.jsx`, because they always were: the WhatsApp
-number, the shop address, the Apps Script URL for email, and the responsible-party block
+number, the shop address, and the responsible-party block
 the privacy notice is legally obliged to publish. **The admin password is not among them**
 — it moved to Vercel and is checked server-side in `api/_lib/adminAuth.js`. See `ADR.md`.
 
@@ -182,8 +186,8 @@ deployment unreachable — `curl` to the site still works for checking state.
 | Service | Reached via | Still a human step |
 | --- | --- | --- |
 | Supabase (Postgres) | `api/` on the server, and `mcp__Supabase__*` | nothing |
-| Google Apps Script | `fetch` from the browser, **email notices only** | editing and redeploying it |
-| Gmail (booking + cancellation notices) | `MailApp` inside that same Apps Script — **but nothing arrives**: the script answers `{"ok":true}` to every action and never implemented `notify` (#40) | editing and redeploying that script; the address is `BARBER_EMAIL` in `src/App.jsx` |
+| Web Push (booking + cancellation notices) | `api/_lib/push.js` on the server; the VAPID pair lives in `push_keys`, the devices in `push_subscriptions` | nothing — it is a browser standard, no account and no dashboard. Only Félix pressing "Activar" on his own phone, once |
+| Google Apps Script | **nothing calls it any more** (#53). Still deployed, still unreachable by any connector | only if it is ever revived, which nothing needs |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
 | Unsplash | four hotlinked photos | none — if Unsplash changes them, the gallery changes |
