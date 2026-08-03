@@ -22,13 +22,17 @@ export default async function handler(req, res) {
     return res.status(503).json({ ok: false, reason: "database_unreachable" });
   }
 
-  // Si el aviso por correo está configurado o no. Dice **si existe**, nunca su
-  // valor. Sin esto, un `APPS_SCRIPT_SECRET` mal escrito no da error en ningún
-  // sitio: simplemente los correos no llegan, que es exactamente el fallo
-  // invisible del que viene esta ruta de aviso.
+  // Cuántos móviles están apuntados a los avisos. Un cero aquí significa que
+  // nadie se entera de que alguien ha reservado — que es la avería que importa
+  // y la que, si no se dice, no se ve por ningún lado. Es un recuento: no trae
+  // ni un dato de la tabla.
+  const { count } = await supabase
+    .from("push_subscriptions")
+    .select("endpoint", { count: "exact", head: true });
+
   return res.status(200).json({
     ok: true,
     schema_version: data.value,
-    notify: process.env.APPS_SCRIPT_SECRET ? "configurado" : "sin_configurar",
+    avisos: count ?? 0,
   });
 }
