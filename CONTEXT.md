@@ -24,6 +24,11 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
   50003 Zaragoza, Spain. One barber, "Félix".
 - Customers pick a service, a day and a time, and leave a name and a phone number. They
   can look their own bookings up again and cancel them.
+- **A booking can be for up to 3 people** — a father and his son. Each picks their own
+  service and gives their own name; one phone for the lot. They are seen back to back, so
+  only times where the whole group fits are offered, and the whole reservation can be
+  cancelled at once or one person taken out of it. Félix's panel cannot yet take one by
+  hand — that is #20, still open.
 - Picking a time holds it for 5 minutes while the customer fills in their details, with a
   visible countdown. For everyone else that hour disappears, and comes back on its own if
   nobody confirms. Félix's panel is bound by the same holds — his own choice, made knowing
@@ -49,6 +54,5 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
 - **No tests, linter or formatter.** Not an oversight to fix in passing — see `ADR.md`.
 - **The gallery photos still come from the code**, not from the database. Uploading them
   needs file storage; it was left out of the Supabase migration on purpose.
-- The Google Sheet is kept, frozen, as the migration's rollback. It is not a live copy
-  and nothing writes to it. What the client is offered and declines belongs here as it
-  happens, so it is never re-proposed a month later.
+- What the client is offered and declines belongs here as it happens, so it is never
+  re-proposed a month later.

@@ -29,6 +29,13 @@ endorsement.
 - Writes that a **customer** performs need a public route of their own that does one
   thing. `/api/waitlist` only inserts. Routing a customer action through `/api/admin` is
   what broke joining the waiting list the moment that endpoint grew a lock.
+- **A booking for several people is N appointment rows sharing a `group_id`**, back to
+  back, inserted in **one multi-row `INSERT`** — that statement is the all-or-nothing, not
+  a transaction someone has to remember to open. Inserting them in a loop is what would
+  leave half a reservation and somebody at the door believing two were coming. `group_id`
+  cancels the whole group, so it is as secret as an appointment id: it never leaves a
+  public route. The start times are chained **server-side** from the services' durations,
+  for the same reason the duration and the price already were.
 - Two appointments for one barber cannot overlap: a Postgres exclusion constraint
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
@@ -38,8 +45,6 @@ endorsement.
   still let the booking through. Its exclusion constraint carries the validity window
   inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
   cannot go in an index predicate. Expired rows are swept with normal use; no cron.
-- There is no login and no user accounts. A customer is identified by the name and phone
-  they type. "Mis citas" is a lookup, not a session.
 - `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` are stale copies nothing
   imports. Editing them changes nothing that ships.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
@@ -53,8 +58,6 @@ endorsement.
   never put in a recorded migration — migrations travel into backups and checkouts.
 - `BARBER_EMAIL` is empty, so the barber-side cancellation notice never sends. The code
   path exists and looks like it works.
-- Four gallery photos are hotlinked from Unsplash. The app depends on somebody else's
-  URLs staying up.
 
 **Getting to production**
 
