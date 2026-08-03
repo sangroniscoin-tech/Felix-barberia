@@ -2109,6 +2109,16 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     ? appointments.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()) || a.phone.includes(search))
     : [];
 
+  // Cuántas personas hay en cada reserva de grupo. Sin esto, dos citas seguidas
+  // de la misma familia se leen como dos clientes distintos que no se conocen.
+  const groupSizes = useMemo(() => {
+    const n = {};
+    for (const a of appointments) {
+      if (a.groupId) n[a.groupId] = (n[a.groupId] || 0) + 1;
+    }
+    return n;
+  }, [appointments]);
+
   const clientMap = useMemo(() => {
     const map = {};
     appointments.forEach((a) => {
@@ -2254,7 +2264,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       {search.length > 0 ? (
         <div className="fade-in">
           <p style={{ fontSize: 12, color: SMOKE, marginBottom: 8 }}>{searchResults.length} resultado(s)</p>
-          {searchResults.map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} onClick={() => setSelectedAppt(a)} />)}
+          {searchResults.map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
         </div>
       ) : (
         <>
@@ -2274,7 +2284,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <div style={{ margin: "14px 0" }}>
                 {apptsForDate(cursorDate).length === 0 ? (
                   <EmptyState text="Sin citas este día." />
-                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} onClick={() => setSelectedAppt(a)} />)}
+                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
               </div>
               <QuickActions onAdd={() => setShowAdd(true)} onBlock={() => setShowBlock(true)} onVacation={() => setShowVacation(true)} />
             </div>
@@ -2294,7 +2304,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                     {apptsForDate(d).length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Sin citas</span> :
                       apptsForDate(d).map((a) => (
                         <div key={a.id} onClick={() => setSelectedAppt(a)} style={{ fontSize: 12.5, padding: "4px 0", cursor: "pointer", display: "flex", justifyContent: "space-between" }}>
-                          <span>{a.time} · {a.name}{barbers.length > 1 ? ` (${barbers.find((b) => b.id === a.barberId)?.name || ""})` : ""}</span>
+                          <span>{a.time} · {a.name}{barbers.length > 1 ? ` (${barbers.find((b) => b.id === a.barberId)?.name || ""})` : ""}<GroupTag a={a} groupSize={groupSizes[a.groupId]} /></span>
                           <span style={{ color: SMOKE }}>{services.find((s) => s.id === a.service)?.name} · {apptPrice(a)}€</span>
                         </div>
                       ))}
@@ -2439,7 +2449,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
         </>
       )}
 
-      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
+      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
       {showAdd && <AddApptModal services={services} barbers={barbers} holds={holds} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
       {showBlock && <BlockHourModal onClose={() => setShowBlock(false)} onSave={blockRange} />}
       {showVacation && <VacationModal onClose={() => setShowVacation(false)} onSave={addVacation} />}
@@ -2709,14 +2719,26 @@ function DateNav({ date, onPrev, onNext, label }) {
   );
 }
 
-function ApptRow({ a, services, barbers, onClick }) {
+// La marca de grupo: dice que esta cita se reservó junto a otras y en qué
+// puesto entra. Sin ella, dos citas seguidas de un padre y su hijo se leen
+// como dos clientes que no tienen nada que ver.
+function GroupTag({ a, groupSize }) {
+  if (!a.groupId) return null;
+  return (
+    <span style={{ fontSize: 10.5, fontWeight: 700, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: "1px 5px", marginLeft: 6, whiteSpace: "nowrap" }}>
+      Grupo{a.groupPosition && groupSize ? ` · ${a.groupPosition} de ${groupSize}` : ""}
+    </span>
+  );
+}
+
+function ApptRow({ a, services, barbers, onClick, groupSize }) {
   const s = services.find((x) => x.id === a.service);
   const b = barbers?.find((x) => x.id === a.barberId);
   return (
     <button onClick={onClick} className="card" style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: 12, borderRadius: 10, marginBottom: 8, cursor: "pointer", opacity: a.noShow ? 0.6 : 1 }}>
       <div style={{ fontWeight: 700, fontSize: 13, color: GOLD, minWidth: 46 }}>{a.time}</div>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.name}{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.name}<GroupTag a={a} groupSize={groupSize} />{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
         <div style={{ fontSize: 11.5, color: SMOKE }}>{s?.name} · {s?.duration} min · {s?.price}€{b && barbers.length > 1 ? ` · ${b.name}` : ""}</div>
       </div>
       <div style={{ fontSize: 11, color: SMOKE }}>{a.phone}</div>
@@ -2775,18 +2797,31 @@ function ModalShell({ title, onClose, children }) {
   );
 }
 
-function ApptModal({ appt, services, barbers, onClose, onCancel, onToggleNoShow }) {
+function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow }) {
   const s = services.find((x) => x.id === appt.service);
   const b = barbers?.find((x) => x.id === appt.barberId);
   return (
-    <ModalShell title="Cita" onClose={onClose}>
+    <ModalShell title={appt.groupId ? "Cita de una reserva de grupo" : "Cita"} onClose={onClose}>
       <Row label="Cliente" value={appt.name} />
       <Row label="Teléfono" value={appt.phone} />
+      {/* Cancelar aquí quita SOLO a esta persona: las demás del grupo se quedan
+          con su hora. Se dice, para que no se cancele media familia sin querer. */}
+      {appt.groupId && (
+        <Row
+          label="Reserva"
+          value={groupSize ? `Grupo · ${appt.groupPosition} de ${groupSize}` : "Grupo"}
+        />
+      )}
       {b && <Row label="Barbero" value={b.name} />}
       <Row label="Servicio" value={s?.name} />
       <Row label="Precio" value={`${s?.price}€`} />
       <Row label="Fecha" value={appt.dateKey} />
       <Row label="Hora" value={appt.time} />
+      {appt.groupId && groupSize > 1 && (
+        <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(201,162,39,0.12)", color: SMOKE, fontSize: 12 }}>
+          Vinieron juntos: {groupSize} personas seguidas con el mismo teléfono. Cancelar aquí quita solo a esta persona.
+        </div>
+      )}
       {appt.noShow && (
         <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12, textAlign: "center" }}>
           Marcado como "no se presentó"
