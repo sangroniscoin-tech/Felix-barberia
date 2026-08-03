@@ -48,6 +48,13 @@ endorsement.
   still let the booking through. Its exclusion constraint carries the validity window
   inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
   cannot go in an index predicate. Expired rows are swept with normal use; no cron.
+- **Nothing a customer sees comes from the code.** State starts empty and a `loaded` flag
+  says whether `/api/bootstrap` has answered; empty means *not known yet*, never *none*.
+  So "no quedan huecos" and "sin citas" cannot render before `loaded`, the booking screen
+  does not mount until then — its step count and barber are computed once, at mount — and
+  `saveCollection`, which writes a whole collection, refuses to run pre-load or it would
+  overwrite the real rows with an empty list. The constants it replaced showed customers
+  15 €/10 €/22 € for half a second before the real prices arrived.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
 - Apps Script survives **only** to send the email notice, and no agent can reach it: any
@@ -66,8 +73,8 @@ endorsement.
   again after the deploy; an already-broken production stops the merge. Nothing reverts
   or redeploys automatically — an agent reports and waits.
 - The health check must reach the database, not just the page: `/api/health` separates
-  "environment variables missing" from "Supabase not answering". The app no longer falls
-  back to sample data — a failed load shows a red banner — but check the data anyway.
+  "environment variables missing" from "Supabase not answering". A failed load shows a red
+  banner — but check the data anyway.
 - Vercel preview deployments are behind SSO and cannot be curl'd from a session. Ship
   server changes to production before pointing the client at them; that is the only way
   to verify environment variables without the client's browser.
