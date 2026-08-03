@@ -2,7 +2,11 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail } from "lucide-react";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
-const BARBER_EMAIL = ""; // <-- pon aquí tu correo, para recibir aviso cuando un cliente cancele
+// Correo de la barbería, al que llegan los avisos de que un cliente ha
+// reservado o ha cancelado. Esos avisos llevan dentro el nombre y el teléfono
+// del cliente, y por eso el aviso de privacidad lo dice. Es un correo de
+// negocio, público, no una credencial: no va en variables de entorno.
+const BARBER_EMAIL = "felixbarberiazgz@gmail.com";
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
 const MAPS_LINK = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(SHOP_ADDRESS)}`;
 
@@ -15,8 +19,9 @@ const RESPONSABLE_NIF = "61564701A";
 const RESPONSABLE_DOMICILIO = "Calle Cereros 22, 50003 Zaragoza";
 // El correo al que un cliente escribe para ejercer sus derechos. Es la vía
 // principal del aviso; el WhatsApp y el domicilio siguen valiendo igual.
-// Ojo: no es `BARBER_EMAIL` —el aviso de cancelación al barbero es otro
-// problema, con su propia issue— y no debe rellenarse con este de rebote.
+// Ojo: no es `BARBER_EMAIL`. Hoy valen lo mismo, pero son dos cosas distintas
+// —a dónde llegan los avisos, y a dónde escribe un cliente para ejercer sus
+// derechos— y el día que Félix quiera separarlas no deben moverse juntas.
 const RESPONSABLE_EMAIL = "felixbarberiazgz@gmail.com";
 // Se cambia a mano cuando se cambie el texto del aviso.
 const PRIVACIDAD_ACTUALIZADO = "3 de agosto de 2026";
@@ -300,8 +305,10 @@ async function apiSend(path, method, payload, { auth = false } = {}) {
 }
 
 // El correo de aviso lo manda el Apps Script antiguo, que sigue en pie solo
-// para esto. BARBER_EMAIL está vacío, así que hoy no se envía nada de todos
-// modos. Mover los avisos fuera de Google es una petición aparte.
+// para esto. Mover los avisos fuera de Google es una petición aparte.
+// No espera respuesta y se traga los errores a propósito: un correo que falla
+// no puede tumbar una reserva. La consecuencia —que un fallo de envío es
+// invisible— es conocida y se acepta; no añadir reintentos ni avisos.
 async function sendNotification(to, subject, message) {
   if (MAINTENANCE_MODE) return false;
   if (!SHEETS_API_URL || !to) return false;
@@ -1125,7 +1132,7 @@ function Privacidad({ embedded = false }) {
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li><strong style={{ color: BONE }}>Supabase</strong> — la base de datos donde se guardan las citas. Los servidores están en la Unión Europea (Irlanda, <span style={{ whiteSpace: "nowrap" }}>eu-west-1</span>).</li>
           <li><strong style={{ color: BONE }}>Vercel</strong> — donde está alojada esta web.</li>
-          <li><strong style={{ color: BONE }}>Google (Gmail)</strong> — solo para enviarte el correo que avisa de una cancelación, y solo si nos has dado un correo.</li>
+          <li><strong style={{ color: BONE }}>Google (Gmail)</strong> — para dos cosas: enviarte a ti el correo que avisa de una cancelación, solo si nos has dado un correo; y avisar a la barbería de las reservas y de las cancelaciones, correos que llevan dentro <strong style={{ color: BONE }}>tu nombre y tu teléfono</strong>.</li>
         </ul>
         <p style={{ margin: "8px 0 0" }}>
           <strong style={{ color: BONE }}>No vendemos ni cedemos tus datos a nadie más</strong>, no te
