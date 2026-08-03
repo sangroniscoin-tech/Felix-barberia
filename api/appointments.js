@@ -12,6 +12,7 @@ import { conflictingHold } from "./_lib/holds.js";
 import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { notifyShop, bookingNotice, cancellationNotice } from "./_lib/notify.js";
+import { sendPush } from "./_lib/push.js";
 
 // Manda el aviso a la barbería. Nunca lanza y nunca se le deja romper la
 // respuesta: si el correo falla, la cita ya está guardada, que es lo único
@@ -30,7 +31,21 @@ async function tellShop(supabase, appointments, kind, req) {
     const notice = kind === "cancelled"
       ? cancellationNotice(appointments, names)
       : bookingNotice(appointments, names);
-    await notifyShop(notice.subject, notice.message);
+
+    // Los dos avisos van en paralelo y ninguno puede tumbar al otro ni a la
+    // reserva. El del móvil es el que de verdad usa Félix; el correo lleva sin
+    // llegar desde siempre (#40) y se queda por si algún día se arregla.
+    const a = appointments[0];
+    const cuantos = appointments.length > 1 ? ` · ${appointments.length} personas` : "";
+    await Promise.all([
+      notifyShop(notice.subject, notice.message),
+      sendPush({
+        title: notice.subject,
+        // Ni nombre ni teléfono: esto se pinta en la pantalla de bloqueo.
+        body: `${a.dateKey} a las ${a.time} · ${names[a.service] || a.service}${cuantos}`,
+        url: "/",
+      }),
+    ]);
   } catch (e) {
     console.warn("[notify] aviso no enviado:", e.message);
   }
