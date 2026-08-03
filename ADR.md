@@ -72,9 +72,17 @@ endorsement.
   checkouts. Migrated rows keep `raw_name`, `raw_phone`, `raw_email` and `source`.
 - The privacy notice's responsible-party block — name, NIF, domicile, contact email — is
   **public by legal obligation**, not a credential that leaked into `src/`. Leave it there.
-  That page also promises the data is deleted a year after the appointment, and **nothing
-  deletes it**: Félix does it by hand from his panel. Automating it or rewording the
-  promise are the only two honest options; letting it drift is not one.
+- **A `pg_cron` job erases personal data a year after the appointment** — name, phone,
+  email and the `raw_*` columns — keeping the row so the takings survive; waitlist entries
+  go entirely. It runs in Postgres, not on a request, because a retention deadline cannot
+  depend on traffic. It is the only thing here that runs unasked. The published notice
+  describes it, so **the code and that page move together**: changing what the sweep keeps
+  is editing a legal document. `NOT NULL` on name and phone stands — erased rows hold `''`,
+  and `api/` is what actually rejects an empty name on insert.
+- Erased appointments have no phone, and **everything that groups by person groups by
+  phone** — client lists, both rankings. They must filter those rows out or they collapse
+  into one phantom client; they stay in the money and the counts, where they represent
+  nobody. Anything new that keys on `phone` inherits this.
 - `BARBER_EMAIL` carries the shop's address, so every booking and cancellation **tries** to
   send the customer's name and phone to a Gmail inbox — a route out of the database the
   privacy notice describes. Nothing arrives today (entry above), but the notice is written
