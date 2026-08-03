@@ -1118,9 +1118,22 @@ function Privacidad({ embedded = false }) {
       </PrivacidadBloque>
 
       <PrivacidadBloque titulo="Cuánto tiempo los guardamos">
-        <p style={{ margin: 0 }}>
+        <p style={{ margin: "0 0 8px" }}>
           Los datos de una cita se conservan <strong style={{ color: BONE }}>{PRIVACIDAD_CONSERVACION} desde el día de la cita</strong>.
-          Después se borran. Si quieres que los borremos antes, dínoslo y lo hacemos.
+          Pasado ese plazo, <strong style={{ color: BONE }}>tu nombre, tu teléfono y tu correo se borran solos</strong>,
+          sin que nadie tenga que acordarse: lo hace la propia base de datos, una vez al día.
+        </p>
+        <p style={{ margin: "0 0 8px" }}>
+          Lo único que queda después es el apunte de que hubo una cita ese día, a esa hora, de
+          ese servicio y a ese precio, <strong style={{ color: BONE }}>sin ninguna persona dentro</strong>.
+          La barbería lo necesita para sus cuentas, y ya no permite saber quién eras.
+        </p>
+        <p style={{ margin: "0 0 8px" }}>
+          Si te apuntaste a la <strong style={{ color: BONE }}>lista de espera</strong> y no llegaste a
+          reservar, ese apunte se borra entero al año de apuntarte. De ése no queda nada.
+        </p>
+        <p style={{ margin: 0 }}>
+          Si quieres que lo borremos antes, dínoslo y lo hacemos.
         </p>
       </PrivacidadBloque>
 
@@ -2556,30 +2569,39 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     return n;
   }, [appointments]);
 
+  // Al año de la cita, la base de datos le borra el nombre y el teléfono y deja
+  // el apunte. Todo lo que agrupa por persona tiene que saltárselas: agrupan
+  // por teléfono, y con el teléfono vacío todas las borradas se juntarían en un
+  // único cliente fantasma que además se colaría en los dos rankings.
+  //
+  // En el dinero y en el número de citas sí siguen contando, que es donde no
+  // representan a nadie.
+  const identified = useMemo(() => appointments.filter((a) => a.phone), [appointments]);
+
   const clientMap = useMemo(() => {
     const map = {};
-    appointments.forEach((a) => {
+    identified.forEach((a) => {
       if (!map[a.phone]) map[a.phone] = { name: a.name, phone: a.phone, visits: [] };
       map[a.phone].visits.push(a);
     });
     return Object.values(map).map((c) => ({ ...c, visits: c.visits.sort((x, y) => (x.dateKey < y.dateKey ? 1 : -1)) }));
-  }, [appointments]);
+  }, [identified]);
 
   const stats = useMemo(() => {
     const total = monthAppts.length;
-    const uniqueClients = new Set(monthAppts.map((a) => a.phone));
+    const uniqueClients = new Set(monthAppts.filter((a) => a.phone).map((a) => a.phone));
     const freq = {};
-    appointments.forEach((a) => { freq[a.phone] = (freq[a.phone] || 0) + 1; });
+    identified.forEach((a) => { freq[a.phone] = (freq[a.phone] || 0) + 1; });
     const habituales = [...uniqueClients].filter((p) => freq[p] > 1).length;
     const nuevos = uniqueClients.size - habituales;
     const top = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 3)
-      .map(([phone, count]) => ({ name: appointments.find((a) => a.phone === phone)?.name, count }));
+      .map(([phone, count]) => ({ name: identified.find((a) => a.phone === phone)?.name, count }));
     const noShowFreq = {};
-    appointments.forEach((a) => { if (a.noShow) noShowFreq[a.phone] = (noShowFreq[a.phone] || 0) + 1; });
+    identified.forEach((a) => { if (a.noShow) noShowFreq[a.phone] = (noShowFreq[a.phone] || 0) + 1; });
     const topNoShow = Object.entries(noShowFreq).sort((a, b) => b[1] - a[1]).slice(0, 3)
-      .map(([phone, count]) => ({ name: appointments.find((a) => a.phone === phone)?.name, count }));
+      .map(([phone, count]) => ({ name: identified.find((a) => a.phone === phone)?.name, count }));
     return { total, nuevos, habituales, top, topNoShow };
-  }, [monthAppts, appointments]);
+  }, [monthAppts, identified]);
 
   async function cancelAppt(id) {
     const appt = appointments.find((a) => a.id === id);
@@ -2774,7 +2796,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                         // Mismo lenguaje que la lista del día, que ya atenúa al
                         // ausente y le pone "· no se presentó".
                         <div key={a.id} onClick={() => setSelectedAppt(a)} style={{ fontSize: 12.5, padding: "4px 0", cursor: "pointer", display: "flex", justifyContent: "space-between", opacity: a.noShow ? 0.55 : 1 }}>
-                          <span>{a.time} · {a.name}{barbers.length > 1 ? ` (${barbers.find((b) => b.id === a.barberId)?.name || ""})` : ""}<GroupTag a={a} groupSize={groupSizes[a.groupId]} /></span>
+                          <span style={{ fontStyle: a.name ? undefined : "italic", color: a.name ? undefined : SMOKE }}>{a.time} · {shownName(a)}{barbers.length > 1 ? ` (${barbers.find((b) => b.id === a.barberId)?.name || ""})` : ""}<GroupTag a={a} groupSize={groupSizes[a.groupId]} /></span>
                           <span style={{ color: SMOKE }}>
                             {services.find((s) => s.id === a.service)?.name} ·{" "}
                             <span style={a.noShow ? { textDecoration: "line-through" } : undefined}>{apptPrice(a)}€</span>
@@ -3224,6 +3246,14 @@ function GroupTag({ a, groupSize }) {
 // otros botones — el marcado es inválido y el clic de dentro dispara también
 // el de fuera. Ahora la tarjeta es un `div`, y la zona que abre la ficha y los
 // dos botones son hermanos.
+// Al año de la cita, la base de datos le borra el nombre, el teléfono y el
+// correo, y deja el apunte: día, hora, servicio, precio y estado. Es lo que
+// promete el aviso de privacidad. Un hueco en blanco se lee como un fallo, así
+// que se dice lo que ha pasado.
+const PURGED = "Datos borrados";
+const shownName = (a) => a.name || PURGED;
+const shownPhone = (a) => a.phone || "—";
+
 function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }) {
   const s = services.find((x) => x.id === a.service);
   const b = barbers?.find((x) => x.id === a.barberId);
@@ -3273,10 +3303,10 @@ function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }
       >
         <div style={{ fontWeight: 700, fontSize: 13, color: GOLD, minWidth: 46 }}>{a.time}</div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.name}<GroupTag a={a} groupSize={groupSize} />{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, fontStyle: a.name ? undefined : "italic", color: a.name ? undefined : SMOKE }}>{shownName(a)}<GroupTag a={a} groupSize={groupSize} />{a.noShow && <span style={{ color: "#e0a0a0", fontWeight: 600, fontSize: 11 }}> · no se presentó</span>}</div>
           <div style={{ fontSize: 11.5, color: SMOKE }}>{s?.name} · {s?.duration} min · {s?.price}€{b && barbers.length > 1 ? ` · ${b.name}` : ""}</div>
         </div>
-        <div style={{ fontSize: 11, color: SMOKE }}>{a.phone}</div>
+        <div style={{ fontSize: 11, color: SMOKE }}>{shownPhone(a)}</div>
       </button>
       {/* Solo en las citas cuya hora ya pasó. Marcar como ausente a alguien que
           todavía puede llegar no significa nada, y llenaría de botones justo la
@@ -3382,8 +3412,8 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
   const b = barbers?.find((x) => x.id === appt.barberId);
   return (
     <ModalShell title={appt.groupId ? "Cita de una reserva de grupo" : "Cita"} onClose={onClose}>
-      <Row label="Cliente" value={appt.name} />
-      <Row label="Teléfono" value={appt.phone} />
+      <Row label="Cliente" value={shownName(appt)} />
+      <Row label="Teléfono" value={shownPhone(appt)} />
       {/* Cancelar aquí quita SOLO a esta persona: las demás del grupo se quedan
           con su hora. Se dice, para que no se cancele media familia sin querer. */}
       {appt.groupId && (
