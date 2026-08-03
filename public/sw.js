@@ -34,11 +34,22 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = (event.notification.data && event.notification.data.url) || "/";
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      // Si la web ya está abierta en alguna pestaña, se trae al frente en vez
-      // de abrir una segunda.
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (list) => {
+      // Si la web ya está abierta en alguna pestaña, esa misma pestaña tiene
+      // que IR al destino, no sólo ponerse delante: antes se hacía `focus()` y
+      // se quedaba donde estuviera, así que el aviso avisaba y no llevaba a
+      // ninguna parte. Primero navegar, después enfocar.
       for (const c of list) {
-        if ("focus" in c) return c.focus();
+        if (typeof c.navigate !== "function") continue;
+        try {
+          const navegada = (await c.navigate(url)) || c;
+          if (navegada && "focus" in navegada) return navegada.focus();
+          return;
+        } catch {
+          // Una ventana que este service worker no controla no acepta
+          // `navigate`. Se abre una nueva, que sí se puede.
+          break;
+        }
       }
       if (self.clients.openWindow) return self.clients.openWindow(url);
     })

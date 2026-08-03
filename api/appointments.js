@@ -36,7 +36,10 @@ async function tellShop(supabase, appointments, kind, req) {
     const notice = kind === "cancelled"
       ? cancellationNotice(appointments, names)
       : bookingNotice(appointments, names);
-    await sendPush({ title: notice.subject, body: notice.body, url: "/" });
+    // La dirección la pone el propio aviso: lleva al panel, al día y la hora
+    // de esa cita. Ver `notify.js` — no lleva el id, y no lleva a nadie por
+    // nombre.
+    await sendPush({ title: notice.subject, body: notice.body, url: notice.url || "/" });
   } catch (e) {
     console.warn("[notify] aviso no enviado:", e.message);
   }

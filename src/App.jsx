@@ -163,6 +163,58 @@ function dateFromKey(k) {
   const dt = new Date(y, m - 1, d);
   return dateKey(dt) === k ? dt : null;
 }
+// ---------------------------------------------------------------------------
+// A dónde lleva un aviso tocado.
+//
+// La notificación abre `/?aviso=reserva|cancelada&dia=YYYY-MM-DD&hora=HH:MM`
+// (lo escribe `api/_lib/notify.js`). No trae el id de la cita a propósito: un
+// id es una cita que cancela quien lo tenga. El hueco —día y hora— es lo único
+// con lo que hay que volver a encontrarla, y ya salía en el texto del aviso.
+//
+// Se lee UNA vez, al cargar el módulo, antes de que nada pinte, y se guarda en
+// el estado de la app: así sobrevive a la pantalla de la clave, que vuelve a
+// montar el panel entero. La dirección se limpia en cuanto se aplica, para que
+// recargar la página no reabra la misma ficha para siempre.
+function leerAvisoDeLaUrl() {
+  if (typeof window === "undefined" || !window.location) return null;
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const tipo = p.get("aviso");
+    if (tipo !== "reserva" && tipo !== "cancelada") return null;
+    const dia = p.get("dia");
+    const hora = p.get("hora");
+    // Lo que venga en la barra de direcciones lo escribe cualquiera: si no es
+    // exactamente un día y una hora, no se va a ningún sitio.
+    if (!dateFromKey(dia)) return null;
+    if (!/^\d{2}:\d{2}$/.test(hora || "")) return null;
+    return { tipo, dia, hora };
+  } catch {
+    return null;
+  }
+}
+
+const AVISO_INICIAL = leerAvisoDeLaUrl();
+
+// La cita a la que apunta un aviso. Sin id, el hueco —día y hora— es lo único
+// con lo que se puede volver a encontrarla.
+//
+// Una reserva de grupo abre la ficha de la PRIMERA persona: su ficha ya dice
+// "Grupo · 1 de N" y explica el resto. Las del grupo van encadenadas una detrás
+// de otra, así que a una hora concreta casi siempre hay una sola; el orden por
+// posición es por si alguna vez no.
+function citaDelHueco(lista, dia, hora) {
+  const iguales = (lista || []).filter((a) => a.dateKey === dia && a.time === hora);
+  if (iguales.length === 0) return null;
+  return iguales.slice().sort((a, b) => (a.groupPosition || 1) - (b.groupPosition || 1))[0];
+}
+
+function limpiarUrlDelAviso() {
+  if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
+  try {
+    window.history.replaceState({}, "", window.location.pathname);
+  } catch { /* si el navegador no deja, el destino ya se ha aplicado igual */ }
+}
+
 function fmtLong(d) {
   return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES[d.getMonth()]}`;
 }
@@ -395,7 +447,13 @@ function buildICSDataUri({ start, end, serviceName }) {
 // llegado del servidor no se pinta.
 
 export default function FelixBarberiaApp() {
-  const [view, setView] = useState("inicio"); // inicio | reservar | misCitas | contacto | galeria | privacidad | admin
+  // Si se ha llegado tocando un aviso, se arranca directamente en el panel:
+  // pedirá la clave si hace falta, y después seguirá hasta la ficha.
+  const [view, setView] = useState(AVISO_INICIAL ? "admin" : "inicio"); // inicio | reservar | misCitas | contacto | galeria | privacidad | admin
+  // El destino que traía ese aviso. Vive aquí y no dentro del panel porque el
+  // panel se vuelve a montar cuando la sesión caduca, y entonces se perdería
+  // justo cuando más falta hace: después de teclear la clave.
+  const [avisoDestino, setAvisoDestino] = useState(AVISO_INICIAL);
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialServiceId, setInitialServiceId] = useState(null);
   const [bookingKey, setBookingKey] = useState(0);
@@ -699,7 +757,7 @@ export default function FelixBarberiaApp() {
         {view === "privacidad" && <Privacidad />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -2392,7 +2450,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2411,6 +2469,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // día que no es el suyo.
   const [dataLoaded, setDataLoaded] = useState(false);
 
+  // La línea que se enseña cuando el aviso llevaba a una cita que ya no está
+  // de ninguna manera. Se abre el día igual: es más útil que no hacer nada.
+  const [avisoNota, setAvisoNota] = useState(null);
+  // El destino se aplica UNA vez. Sin esto, cada relectura de las citas
+  // volvería a abrir la ficha que Félix acaba de cerrar.
+  const avisoAplicado = useRef(false);
+
   useEffect(() => {
     if (!authed) return;
     let vivo = true;
@@ -2423,6 +2488,31 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     })();
     return () => { vivo = false; };
   }, [authed, tab]);
+
+  // Aterrizar donde decía el aviso.
+  //
+  // **Sólo con `dataLoaded`**: antes de que lleguen las citas, la lista está
+  // vacía porque no ha llegado, no porque no haya nadie, y decidir aquí sería
+  // decirle "no está" de una cita que sí está. Y sólo con `authed`, porque
+  // hasta entonces lo que se enseña es la pantalla de la clave.
+  useEffect(() => {
+    if (!avisoDestino || !authed || !dataLoaded) return;
+    if (avisoAplicado.current) return;
+    avisoAplicado.current = true;
+
+    setTab("dia");
+    const dia = dateFromKey(avisoDestino.dia);
+    if (dia) setCursorDate(dia);
+
+    const cita = citaDelHueco(appointments, avisoDestino.dia, avisoDestino.hora);
+    if (cita) {
+      setSelectedAppt(cita);
+      setAvisoNota(null);
+    } else {
+      setAvisoNota(`No se ha encontrado la cita de las ${avisoDestino.hora} de este día: puede que ya no exista.`);
+    }
+    if (onAvisoAplicado) onAvisoAplicado();
+  }, [avisoDestino, authed, dataLoaded, appointments]);
 
   function apptsForDate(d) {
     return appointments.filter((a) => a.dateKey === dateKey(d)).sort((a, b) => toMin(a.time) - toMin(b.time));
@@ -2689,6 +2779,14 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "dia" && (
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -1))} onNext={() => setCursorDate(addDays(cursorDate, 1))} label={fmtLong(cursorDate)} />
+              {/* Se ha llegado tocando un aviso y la cita ya no está. El día se
+                  abre igual y se dice en una línea, en vez de no hacer nada. */}
+              {avisoNota && (
+                <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "rgba(201,162,39,0.12)", border: "1px solid rgba(201,162,39,0.35)", color: SMOKE, fontSize: 12.5, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1 }}>{avisoNota}</span>
+                  <button onClick={() => setAvisoNota(null)} style={{ background: "none", border: "none", color: SMOKE, fontSize: 11.5, cursor: "pointer", flexShrink: 0 }}>Cerrar</button>
+                </div>
+              )}
               <div style={{ margin: "14px 0" }}>
                 {!dataLoaded ? (
                   <LoadingRegion label="Cargando las citas del día">
