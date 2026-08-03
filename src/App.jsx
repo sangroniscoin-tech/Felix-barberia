@@ -1761,7 +1761,7 @@ function Row({ label, value }) {
 
 // Ya no recibe la agenda: la pide al servidor por teléfono. Ésa es la razón
 // de ser de esta pantalla desde este cambio.
-function MisCitas({ services, barbers, cancelAppointment }) {
+function MisCitas({ services, barbers, cancelAppointment, cancelAppointmentGroup }) {
   const [phone, setPhone] = useState("");
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState([]);
@@ -1808,9 +1808,55 @@ function MisCitas({ services, barbers, cancelAppointment }) {
     }
   }
 
+  // Anular la reserva entera: una sola petición con el identificador del grupo,
+  // no una por persona. Quitar a uno solo sigue siendo cancelarCita con su id,
+  // y a los demás no se les toca la hora.
+  async function anularReserva(citas) {
+    try {
+      await cancelAppointmentGroup(citas[0].groupId);
+    } catch (e) {
+      window.alert(`No se ha podido cancelar: ${e.message}`);
+      return;
+    }
+    setCancelledIds((prev) => {
+      const next = { ...prev };
+      for (const c of citas) next[c.id] = true;
+      return next;
+    });
+    if (BARBER_EMAIL) {
+      sendNotification(
+        BARBER_EMAIL,
+        "Un cliente canceló su reserva",
+        `${citas[0].name} ha cancelado la reserva de ${citas.length} personas del ${citas[0].dateKey} a las ${citas[0].time}.\nTeléfono: ${phone}`
+      );
+    }
+  }
+
   function canCancel(appt) {
     const apptDate = new Date(appt.dateKey + "T" + appt.time);
     return apptDate.getTime() - Date.now() > 3 * 60 * 60 * 1000;
+  }
+
+  // Las citas que se reservaron juntas se enseñan juntas: una tarjeta por
+  // reserva, con sus personas dentro. Una cita suelta es una tarjeta de una.
+  // El orden es el que trae el servidor, por día y hora.
+  function agrupar(citas) {
+    const grupos = [];
+    const porId = new Map();
+    for (const a of citas) {
+      if (!a.groupId) {
+        grupos.push({ key: `s:${a.id}`, personas: [a] });
+        continue;
+      }
+      let g = porId.get(a.groupId);
+      if (!g) {
+        g = { key: `g:${a.groupId}`, personas: [] };
+        porId.set(a.groupId, g);
+        grupos.push(g);
+      }
+      g.personas.push(a);
+    }
+    return grupos;
   }
 
   return (
@@ -1835,13 +1881,81 @@ function MisCitas({ services, barbers, cancelAppointment }) {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {results.map((a) => {
+            {agrupar(results).map((grupo) => {
+              // Una reserva de varias personas: se enseña entera, con quién
+              // entra a cada hora, y se puede anular de una vez o por persona.
+              if (grupo.personas.length > 1) {
+                const primera = grupo.personas[0];
+                const b = barbers.find((x) => x.id === primera.barberId);
+                const enPie = grupo.personas.filter((p) => !cancelledIds[p.id]);
+                const cancelableGrupo = canCancel(primera) && enPie.length > 0;
+                const total = grupo.personas.reduce((n, p) => n + (p.price != null ? p.price : 0), 0);
+                return (
+                  <div key={grupo.key} className="card" style={{ padding: 14, borderRadius: 12 }}>
+                    <div style={{ fontSize: 12.5, color: GOLD, fontWeight: 700, marginBottom: 8 }}>
+                      Reserva para {grupo.personas.length} personas
+                    </div>
+                    <Row label="Fecha" value={primera.dateKey} />
+                    {b && <Row label="Barbero" value={b.name} />}
+                    {grupo.personas.map((p) => {
+                      const s = services.find((x) => x.id === p.service);
+                      const quitada = cancelledIds[p.id];
+                      return (
+                        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                          <div style={{ flex: 1, fontSize: 13.5, opacity: quitada ? 0.45 : 1, textDecoration: quitada ? "line-through" : "none" }}>
+                            <strong>{p.time}</strong> · {p.name}
+                            <div style={{ color: SMOKE, fontSize: 12 }}>{s?.name || p.service}</div>
+                          </div>
+                          {quitada ? (
+                            <span style={{ fontSize: 11.5, color: SMOKE }}>Cancelada</span>
+                          ) : (
+                            <button
+                              onClick={() => canCancel(p) && cancelarCita(p)}
+                              disabled={!canCancel(p)}
+                              className="ghost-btn"
+                              style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, cursor: canCancel(p) ? "pointer" : "not-allowed", opacity: canCancel(p) ? 1 : 0.4 }}>
+                              Quitar
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", fontSize: 13.5 }}>
+                      <span style={{ color: SMOKE }}>Total</span>
+                      <span style={{ fontWeight: 600 }}>{total}€</span>
+                    </div>
+                    {enPie.length === 0 ? (
+                      <>
+                        <div style={{ fontSize: 12, color: SMOKE, marginTop: 4, marginBottom: 8 }}>Reserva cancelada. Avisa al barbero por WhatsApp:</div>
+                        <a
+                          href={buildCancelWhatsAppLink({ name: primera.name, phone, serviceName: `${grupo.personas.length} personas`, dateLabel: primera.dateKey, time: primera.time })}
+                          target="_blank" rel="noopener noreferrer"
+                          className="gold-btn"
+                          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: 10, borderRadius: 10, fontWeight: 700, fontSize: 12.5, textDecoration: "none" }}
+                        >
+                          <MessageCircle size={14} /> Avisar por WhatsApp
+                        </a>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => cancelableGrupo && anularReserva(enPie)}
+                        disabled={!cancelableGrupo}
+                        className="ghost-btn"
+                        style={{ width: "100%", marginTop: 6, padding: 10, borderRadius: 10, fontSize: 12.5, cursor: cancelableGrupo ? "pointer" : "not-allowed", opacity: cancelableGrupo ? 1 : 0.4 }}>
+                        {canCancel(primera) ? "Anular toda la reserva" : "Ya no se puede cancelar (menos de 3h)"}
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+
+              const a = grupo.personas[0];
               const s = services.find((x) => x.id === a.service);
               const b = barbers.find((x) => x.id === a.barberId);
               const cancelable = canCancel(a);
               const justCancelled = cancelledIds[a.id];
               return (
-                <div key={a.id} className="card" style={{ padding: 14, borderRadius: 12 }}>
+                <div key={grupo.key} className="card" style={{ padding: 14, borderRadius: 12 }}>
                   <Row label="Servicio" value={s?.name || "-"} />
                   {b && <Row label="Barbero" value={b.name} />}
                   <Row label="Fecha" value={a.dateKey} />
