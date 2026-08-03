@@ -16,6 +16,12 @@ import { cleanName } from "./shape.js";
 // valide el navegador es comodidad.
 export const MAX_GROUP_PEOPLE = 3;
 
+// Félix, desde su panel, puede meter hasta cinco: se lo piden por teléfono y él
+// sabe lo que le cabe en el día; quien reserva desde la web, no. El tope alto
+// SOLO se aplica con un pase de administrador válido. Ausente, caducado o
+// inventado, se cae al tope público — cerrado por defecto, nunca abierto.
+export const MAX_GROUP_PEOPLE_ADMIN = 5;
+
 function toHHMM(mins) {
   const h = Math.floor(mins / 60).toString().padStart(2, "0");
   const m = (mins % 60).toString().padStart(2, "0");
@@ -36,7 +42,7 @@ export function newGroupId() {
 //   { people: [{ name, service }, …] }      ← un grupo de hasta tres.
 //
 // Devuelve { people } o { error: { field, message } }.
-export function readPeople(body) {
+export function readPeople(body, maxPeople = MAX_GROUP_PEOPLE) {
   const raw = body.people;
 
   if (raw === undefined || raw === null) {
@@ -51,11 +57,11 @@ export function readPeople(body) {
   if (raw.length < 1) {
     return { error: { field: "people", message: "Falta a quién es la cita." } };
   }
-  if (raw.length > MAX_GROUP_PEOPLE) {
+  if (raw.length > maxPeople) {
     return {
       error: {
         field: "people",
-        message: `Como mucho se puede reservar para ${MAX_GROUP_PEOPLE} personas de una vez.`,
+        message: `Como mucho se puede reservar para ${maxPeople} personas de una vez.`,
       },
     };
   }
@@ -73,17 +79,17 @@ export function readPeople(body) {
 // Lee los servicios de una reserva temporal: uno solo, o los de todo el grupo.
 //   { service: "corte" }              ← la forma de siempre.
 //   { services: ["corte", "barba"] }  ← el tramo entero del grupo.
-export function readServiceIds(body) {
+export function readServiceIds(body, maxPeople = MAX_GROUP_PEOPLE) {
   const raw = body.services;
   if (raw === undefined || raw === null) return { ids: [body.service] };
   if (!Array.isArray(raw) || raw.length < 1) {
     return { error: { field: "services", message: "La lista de servicios no es válida." } };
   }
-  if (raw.length > MAX_GROUP_PEOPLE) {
+  if (raw.length > maxPeople) {
     return {
       error: {
         field: "services",
-        message: `Como mucho se puede reservar para ${MAX_GROUP_PEOPLE} personas de una vez.`,
+        message: `Como mucho se puede reservar para ${maxPeople} personas de una vez.`,
       },
     };
   }

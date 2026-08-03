@@ -9,7 +9,19 @@ import {
   isValidPhone, isValidEmail, isValidDateKey, isValidTime,
 } from "./_lib/shape.js";
 import { conflictingHold } from "./_lib/holds.js";
-import { readPeople, chainTimes, newGroupId } from "./_lib/groups.js";
+import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
+import { requireAdmin } from "./_lib/adminAuth.js";
+
+// Cuánta gente puede meter QUIEN ESTÁ PIDIENDO. Con un pase de administrador
+// válido, cinco: es Félix apuntando lo que le piden por teléfono, y él sabe lo
+// que le cabe en el día. Sin pase, o con uno caducado o inventado, tres.
+//
+// El pase SOLO levanta el tope. No salta la comprobación de solapamiento, ni la
+// de reservas temporales, ni ninguna otra validación: aquí no abre puertas,
+// solo cambia un número.
+function maxPeopleFor(req) {
+  return requireAdmin(req) === null ? MAX_GROUP_PEOPLE_ADMIN : MAX_GROUP_PEOPLE;
+}
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -39,7 +51,7 @@ export default async function handler(req, res) {
 
     // Una persona o varias. Un solo teléfono y un solo correo para toda la
     // reserva: los de quien reserva. Un nombre por persona.
-    const parsed = readPeople(body);
+    const parsed = readPeople(body, maxPeopleFor(req));
     if (parsed.error) return bad(res, parsed.error.message, parsed.error.field);
     const people = parsed.people;
     const grouped = people.length > 1;

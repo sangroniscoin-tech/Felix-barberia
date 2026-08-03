@@ -37,6 +37,9 @@ export default async function handler(req, res) {
     // Un servicio, o los de todo el grupo. Con varios se guarda el TRAMO
     // ENTERO, no solo el de la primera persona: si no, alguien podría colarse
     // en la hora de la segunda mientras el cliente rellena sus datos.
+    // El tope aquí es el público, y no sube con ningún pase: el panel no crea
+    // reservas temporales —ésa es la razón de que a Félix le afecten las de la
+    // web— así que nadie necesita guardar un tramo de cinco.
     const wanted = readServiceIds(body);
     if (wanted.error) return bad(res, wanted.error.message, wanted.error.field);
 

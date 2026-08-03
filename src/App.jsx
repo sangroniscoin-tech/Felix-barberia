@@ -557,9 +557,12 @@ export default function FelixBarberiaApp() {
   // Crea una cita, o el grupo entero si son varias personas. Devuelve SIEMPRE
   // una lista con las citas creadas, o lanza un error con un mensaje que se
   // puede enseñar tal cual.
-  async function createAppointment(data) {
+  // Con { auth: true } se adjunta el pase del panel. No hace falta para
+  // reservar —y no debe— pero es lo que le dice al servidor que quien pide es
+  // Félix, y solo por eso le deja meter hasta cinco personas en vez de tres.
+  async function createAppointment(data, opts) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
-    const body = await apiSend("/api/appointments", "POST", data);
+    const body = await apiSend("/api/appointments", "POST", data, opts);
     // Al estado público solo van los BLOQUES: cuándo empiezan y cuánto duran.
     // Las citas enteras se las queda quien las ha reservado.
     const created = body.appointments || [body.appointment];
@@ -2185,7 +2188,8 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     try {
       // Sin holdId a propósito: el panel no tiene reserva temporal propia, y
       // eso es justo lo que hace que le afecten las de quien reserva por la web.
-      await createAppointment(data);
+      // Con el pase, en cambio, sí: es lo único que sube el tope a cinco.
+      await createAppointment(data, { auth: true });
     } catch (e) {
       if (e.reason === "slot_held") {
         // No es un error: alguien está rellenando sus datos sobre esa hora.
@@ -2838,12 +2842,19 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
   );
 }
 
+// El tope de Félix es más alto que el de la web: por teléfono le piden grupos
+// más grandes, y él sabe lo que le cabe en el día. Quien de verdad manda es el
+// servidor, que solo sube el tope si la petición trae un pase válido.
+const MAX_PERSONAS_PANEL = 5;
+
 function AddApptModal({ services, barbers, holds, onClose, onSave }) {
-  const [name, setName] = useState("");
+  // Una persona por fila, con su servicio y su nombre. El nombre de quien llama
+  // se repite en todas: Félix escribe "Juan" una vez y solo cambia el que sea
+  // distinto, en vez de teclear cinco veces con el teléfono en la oreja.
+  const [people, setPeople] = useState([{ name: "", service: services[0].id }]);
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState(dateKey(new Date()));
   const [time, setTime] = useState("10:00");
-  const [service, setService] = useState(services[0].id);
   const [barberId, setBarberId] = useState(barbers[0]?.id);
   // Una reserva temporal caduca sola: el aviso tiene que desaparecer cuando
   // eso ocurra, sin que Félix cierre y vuelva a abrir la ventana.
@@ -2853,25 +2864,110 @@ function AddApptModal({ services, barbers, holds, onClose, onSave }) {
     return () => clearInterval(t);
   }, []);
 
-  const chosenService = services.find((s) => s.id === service);
+  const partySize = people.length;
+  const grupo = partySize > 1;
+  const durationOfService = (id) => (services.find((s) => s.id === id)?.duration) || 30;
+  // Van seguidos, así que el hueco que hace falta es la SUMA de sus duraciones.
+  const totalDuration = people.reduce((n, p) => n + durationOfService(p.service), 0);
+  const totalPrice = people.reduce((n, p) => n + ((services.find((s) => s.id === p.service)?.price) || 0), 0);
+
+  // A qué hora entra cada uno. Esto es para enseñarlo: las horas de verdad las
+  // encadena el servidor.
+  const horas = [];
+  if (isValidTimeText(time)) {
+    let cursor = toMin(time);
+    for (const p of people) {
+      horas.push(toHHMM(cursor));
+      cursor += durationOfService(p.service);
+    }
+  }
+
+  function setPartySize(n) {
+    setPeople((prev) => {
+      const next = prev.slice(0, n);
+      // El nombre de quien llama, ya puesto. Se cambia si hace falta.
+      while (next.length < n) next.push({ name: prev[0].name, service: services[0].id });
+      return next;
+    });
+  }
+
+  // Cambiar el nombre de quien llama arrastra a los que aún lo llevaban tal
+  // cual. Al que Félix ya haya cambiado no se le toca.
+  function setCallerName(v) {
+    setPeople((prev) => prev.map((p, i) => (i === 0 || p.name === prev[0].name ? { ...p, name: v } : p)));
+  }
+
+  function setPersona(i, campo, v) {
+    setPeople((prev) => prev.map((p, idx) => (idx === i ? { ...p, [campo]: v } : p)));
+  }
+
   const held = isValidTimeText(time)
-    ? holdCovering(holds, date, barberId, time, (chosenService && chosenService.duration) || 30)
+    ? holdCovering(holds, date, barberId, time, totalDuration)
     : null;
-  const canSave = Boolean(name.trim()) && isPhoneValid(phone) && !held;
+  const canSave = people.every((p) => p.name.trim()) && isPhoneValid(phone) && !held;
+
+  function guardar() {
+    // Con una sola persona se manda exactamente lo de siempre. Con varias, la
+    // lista: el servidor encadena las horas y las guarda todas o ninguna.
+    onSave(grupo
+      ? { dateKey: date, time, barberId, phone, people: people.map((p) => ({ service: p.service, name: p.name })) }
+      : { dateKey: date, time, service: people[0].service, barberId, name: people[0].name, phone });
+  }
+
   return (
-    <ModalShell title="Añadir cita manual" onClose={onClose}>
-      <FormField label="Nombre"><input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} style={inputStyle} /></FormField>
+    <ModalShell title={grupo ? `Añadir cita para ${partySize} personas` : "Añadir cita manual"} onClose={onClose}>
+      <FormField label={grupo ? "Nombre de quien llama" : "Nombre"}>
+        <input value={people[0].name} onChange={(e) => setCallerName(sanitizeName(e.target.value))} style={inputStyle} />
+      </FormField>
       <FormField label="Teléfono">
         <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" style={inputStyle} />
         {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
       </FormField>
       <FormField label="Fecha"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} /></FormField>
       <FormField label="Hora"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Servicio">
-        <select value={service} onChange={(e) => setService(e.target.value)} style={inputStyle}>
-          {services.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.price}€)</option>)}
-        </select>
+
+      <FormField label="¿Cuántas personas?">
+        <div style={{ display: "flex", gap: 6 }}>
+          {Array.from({ length: MAX_PERSONAS_PANEL }, (_, i) => i + 1).map((n) => {
+            const active = partySize === n;
+            return (
+              <button key={n} onClick={() => setPartySize(n)} style={{
+                flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                border: active ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,0.15)",
+                background: active ? GOLD : "#0B0B0A", color: active ? "#111111" : BONE,
+              }}>{n}</button>
+            );
+          })}
+        </div>
       </FormField>
+
+      {!grupo ? (
+        <FormField label="Servicio">
+          <select value={people[0].service} onChange={(e) => setPersona(0, "service", e.target.value)} style={inputStyle}>
+            {services.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.price}€)</option>)}
+          </select>
+        </FormField>
+      ) : (
+        <>
+          {people.map((p, i) => (
+            <div key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 8, marginTop: 8 }}>
+              <div style={{ fontSize: 11.5, color: GOLD, fontWeight: 700, marginBottom: 6 }}>
+                Persona {i + 1}{horas[i] ? ` · entra a las ${horas[i]}` : ""}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input value={p.name} onChange={(e) => setPersona(i, "name", sanitizeName(e.target.value))} placeholder="Nombre" style={{ ...inputStyle, flex: 1 }} />
+                <select value={p.service} onChange={(e) => setPersona(i, "service", e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+                  {services.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.price}€)</option>)}
+                </select>
+              </div>
+            </div>
+          ))}
+          <div className="card" style={{ padding: 10, borderRadius: 10, fontSize: 12.5, color: SMOKE, marginTop: 10 }}>
+            Seguidas, de {horas[0]} en adelante · {totalDuration} min en total · <strong style={{ color: BONE }}>{totalPrice}€</strong>
+          </div>
+        </>
+      )}
+
       {barbers.length > 1 && (
         <FormField label="Barbero">
           <select value={barberId} onChange={(e) => setBarberId(e.target.value)} style={inputStyle}>
@@ -2881,39 +2977,13 @@ function AddApptModal({ services, barbers, holds, onClose, onSave }) {
       )}
       {held && (
         <div className="card" style={{ padding: 12, borderRadius: 10, fontSize: 12.5, color: "#f2d9a6", border: "1px solid #6b5323", marginTop: 8 }}>
-          Alguien está reservando esa hora por la web ahora mismo. Se libera sola en unos
+          Alguien está reservando {grupo ? "una de esas horas" : "esa hora"} por la web ahora mismo. Se libera sola en unos
           minutos si no llega a confirmar. Espera un poco o elige otra hora.
         </div>
       )}
-      <button disabled={!canSave} onClick={() => onSave({ dateKey: date, time, service, barberId, name, phone })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: canSave ? 1 : 0.5 }}>Guardar cita</button>
-    </ModalShell>
-  );
-}
-
-function BlockHourModal({ onClose, onSave }) {
-  const [date, setDate] = useState(dateKey(new Date()));
-  const [start, setStart] = useState("11:00");
-  const [end, setEnd] = useState("12:30");
-  const [label, setLabel] = useState("");
-  return (
-    <ModalShell title="Bloquear horas" onClose={onClose}>
-      <FormField label="Fecha"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Desde"><input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Hasta"><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Motivo (opcional)"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Médico, personal…" style={inputStyle} /></FormField>
-      <button onClick={() => onSave({ dateKey: date, start, end, label })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer" }}>Bloquear</button>
-    </ModalShell>
-  );
-}
-
-function VacationModal({ onClose, onSave }) {
-  const [start, setStart] = useState(dateKey(new Date()));
-  const [end, setEnd] = useState(dateKey(addDays(new Date(), 5)));
-  return (
-    <ModalShell title="Bloquear vacaciones" onClose={onClose}>
-      <FormField label="Desde"><input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} /></FormField>
-      <FormField label="Hasta"><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={inputStyle} /></FormField>
-      <button onClick={() => onSave({ start, end })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer" }}>Bloquear días</button>
+      <button disabled={!canSave} onClick={guardar} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: canSave ? 1 : 0.5 }}>
+        {grupo ? `Guardar ${partySize} citas` : "Guardar cita"}
+      </button>
     </ModalShell>
   );
 }
