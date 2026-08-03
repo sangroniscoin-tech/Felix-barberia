@@ -35,7 +35,10 @@ endorsement.
   leave half a reservation and somebody at the door believing two were coming. `group_id`
   cancels the whole group, so it is as secret as an appointment id: it never leaves a
   public route. The start times are chained **server-side** from the services' durations,
-  for the same reason the duration and the price already were.
+  for the same reason the duration and the price already were. **How many people are
+  allowed depends on who is asking**: 5 with a valid admin pass, 3 without one, decided on
+  the server. A missing, expired or invented pass falls to the public limit — the pass
+  raises a number and nothing else, and never skips a check.
 - Two appointments for one barber cannot overlap: a Postgres exclusion constraint
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
@@ -45,8 +48,6 @@ endorsement.
   still let the booking through. Its exclusion constraint carries the validity window
   inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
   cannot go in an index predicate. Expired rows are swept with normal use; no cron.
-- `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` are stale copies nothing
-  imports. Editing them changes nothing that ships.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
 - Apps Script survives **only** to send the email notice, and no agent can reach it: any
