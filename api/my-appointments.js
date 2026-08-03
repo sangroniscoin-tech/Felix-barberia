@@ -58,8 +58,16 @@ export default async function handler(req, res) {
     const serviceDurations = {};
     for (const s of services.data) serviceDurations[s.id] = s.duration_minutes;
 
+    // Cuántas personas quedan en pie en cada grupo. Se cuenta sobre lo que se
+    // acaba de leer —que ya excluye las canceladas— porque un grupo comparte
+    // teléfono: si una persona se ha quitado, la reserva es de las que quedan.
+    const groupSizes = {};
+    for (const r of appts.data || []) {
+      if (r.group_id != null) groupSizes[r.group_id] = (groupSizes[r.group_id] || 0) + 1;
+    }
+
     const rows = (appts.data || [])
-      .map((r) => myAppointmentOut(r, durationOf(r, serviceDurations)))
+      .map((r) => myAppointmentOut(r, durationOf(r, serviceDurations), groupSizes[r.group_id]))
       .sort((a, b) => (a.dateKey + a.time > b.dateKey + b.time ? 1 : -1));
 
     // Sin citas no es un error: es que no tiene ninguna.

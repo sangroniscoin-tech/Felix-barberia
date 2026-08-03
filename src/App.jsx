@@ -554,16 +554,20 @@ export default function FelixBarberiaApp() {
     }
   }
 
-  // Crea una cita. Devuelve la cita creada, o lanza un error con un mensaje
-  // que se puede enseñar tal cual.
+  // Crea una cita, o el grupo entero si son varias personas. Devuelve SIEMPRE
+  // una lista con las citas creadas, o lanza un error con un mensaje que se
+  // puede enseñar tal cual.
   async function createAppointment(data) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     const body = await apiSend("/api/appointments", "POST", data);
-    // Al estado público solo va el BLOQUE: cuándo empieza y cuánto dura. La
-    // cita entera se la queda quien la ha reservado, en confirmedAppt.
-    const a = body.appointment;
-    setAppointmentsState((prev) => [...prev, { dateKey: a.dateKey, time: a.time, barberId: a.barberId, duration: a.duration }]);
-    return a;
+    // Al estado público solo van los BLOQUES: cuándo empiezan y cuánto duran.
+    // Las citas enteras se las queda quien las ha reservado.
+    const created = body.appointments || [body.appointment];
+    setAppointmentsState((prev) => [
+      ...prev,
+      ...created.map((a) => ({ dateKey: a.dateKey, time: a.time, barberId: a.barberId, duration: a.duration })),
+    ]);
+    return created;
   }
 
   // Cancela. No borra: marca. Así queda el rastro de que la cita existió.
@@ -572,6 +576,15 @@ export default function FelixBarberiaApp() {
   async function cancelAppointment(id) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     await apiSend("/api/appointments", "PATCH", { id, status: "cancelled" });
+    await refreshAppointments();
+  }
+
+  // Anula la reserva entera de un grupo de una sola vez. Quitar a una persona
+  // suelta sigue siendo cancelAppointment con su id: las demás se quedan con
+  // la hora que ya tenían.
+  async function cancelAppointmentGroup(groupId) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    await apiSend("/api/appointments", "PATCH", { groupId });
     await refreshAppointments();
   }
 
@@ -629,7 +642,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -1029,7 +1042,11 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   return slots;
 }
 
-function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, initialServiceId, joinWaitlist, schedule }) {
+// El tope de personas por reserva. Aquí es comodidad: quien de verdad manda es
+// el servidor, que lo vuelve a comprobar aunque alguien se salte la web.
+const MAX_PERSONAS = 3;
+
+function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, cancelAppointmentGroup, initialServiceId, joinWaitlist, schedule }) {
   const singleBarber = barbers.length === 1;
   const barberStepEnabled = !singleBarber;
   const serviceStepNum = barberStepEnabled ? 2 : 1;
@@ -1041,13 +1058,16 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
 
   const [step, setStep] = useState(preselected ? (barberStepEnabled ? 1 : dateStepNum) : 1);
   const [barberId, setBarberId] = useState(singleBarber ? barbers[0].id : null);
-  const [service, setService] = useState(preselected || null);
+  // Quiénes vienen: una persona (lo de siempre) o hasta tres. Cada una lleva su
+  // servicio y su nombre; el teléfono y el correo son de quien reserva y van
+  // una sola vez, más abajo.
+  const [people, setPeople] = useState(() => [{ service: preselected || null, name: "" }]);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTime, setSelectedTime] = useState(null);
-  const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [confirmedAppt, setConfirmedAppt] = useState(null);
+  // Las citas que han quedado guardadas: una, o las del grupo entero.
+  const [confirmedAppts, setConfirmedAppts] = useState(null);
   const [cancelled, setCancelled] = useState(false);
   const [bookingError, setBookingError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1061,6 +1081,51 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   // respuesta el número ya no es el suyo, es que la persona se fue: esa
   // reserva se suelta en vez de guardarse.
   const holdSeqRef = useRef(0);
+
+  // ---- Lo que se deduce de quiénes vienen ----
+  const partySize = people.length;
+  const groupBooking = partySize > 1;
+  const service = people[0].service; // el de quien reserva: el que titula la pantalla
+  const primaryName = people[0].name;
+  const allServicesChosen = people.every((p) => p.service);
+  const allNamesFilled = people.every((p) => p.name.trim());
+  // Como van seguidos, el hueco que hace falta es la SUMA de sus duraciones.
+  const totalDuration = people.reduce((n, p) => n + (p.service ? p.service.duration : 0), 0);
+  const totalPrice = people.reduce((n, p) => n + (p.service ? p.service.price : 0), 0);
+  const confirmedAppt = confirmedAppts ? confirmedAppts[0] : null;
+
+  // A qué hora entra cada uno, encadenado desde la hora elegida. Esto es para
+  // enseñarlo: las horas de verdad las calcula el servidor.
+  const personTimes = [];
+  if (selectedTime && allServicesChosen) {
+    let cursor = toMin(selectedTime);
+    for (const p of people) {
+      personTimes.push(toHHMM(cursor));
+      cursor += p.service.duration;
+    }
+  }
+
+  // Cambiar cuántos son cambia el hueco que hace falta, así que la hora
+  // elegida deja de valer y la reserva temporal sobre ella también.
+  function setPartySize(n) {
+    if (n === partySize) return;
+    setPeople((prev) => {
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push({ service: null, name: "" });
+      return next;
+    });
+    setSelectedTime(null);
+    dropHold();
+  }
+
+  function setPersonService(i, s) {
+    setPeople((prev) => prev.map((p, idx) => (idx === i ? { ...p, service: s } : p)));
+    setSelectedTime(null);
+  }
+
+  function setPersonName(i, v) {
+    setPeople((prev) => prev.map((p, idx) => (idx === i ? { ...p, name: v } : p)));
+  }
 
   // Suelta la reserva temporal actual, si la hay, y anula cualquier petición
   // en vuelo. Una persona tiene una sola reserva temporal a la vez.
@@ -1081,10 +1146,12 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     setStep(dataStepNum);
     let h;
     try {
+      // Con varias personas se guarda el TRAMO ENTERO del grupo, no solo el de
+      // la primera: el servidor suma las duraciones de estos servicios.
       h = await createHold({
         dateKey: dateKey(selectedDate),
         time: selectedTime,
-        service: service.id,
+        services: people.map((p) => p.service.id),
         barberId,
       });
     } catch {
@@ -1148,8 +1215,10 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     return arr;
   }, [blockedDays, festivos, vacationRanges, schedule]);
 
-  const availableSlots = selectedDate && service && barberId
-    ? computeAvailableSlots({ date: selectedDate, durationMin: service.duration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds, ownHoldId: hold ? hold.id : null })
+  // Solo se ofrecen las horas donde cabe el grupo ENTERO: la duración con la
+  // que se buscan huecos es la suma de las de todos.
+  const availableSlots = selectedDate && allServicesChosen && barberId
+    ? computeAvailableSlots({ date: selectedDate, durationMin: totalDuration, barberId, appointments, blockedRanges, blockedDays, festivos, vacationRanges, schedule, holds, ownHoldId: hold ? hold.id : null })
     : [];
 
   const barberName = barbers.find((b) => b.id === barberId)?.name || "";
@@ -1160,31 +1229,33 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     const currentHold = holdRef.current;
     const latest = await refreshAppointments();
     const stillFree = computeAvailableSlots({
-      date: selectedDate, durationMin: service.duration, barberId, appointments: latest,
+      date: selectedDate, durationMin: totalDuration, barberId, appointments: latest,
       blockedRanges, blockedDays, festivos, vacationRanges, schedule,
       holds: latestHoldsRef.current, ownHoldId: currentHold ? currentHold.id : null,
     }).includes(selectedTime);
 
     if (!stillFree) {
       setSubmitting(false);
-      setBookingError("Justo ahora alguien ha reservado esa hora. Elige otro horario disponible, por favor.");
+      setBookingError(groupBooking
+        ? "Justo ahora alguien ha cogido una de esas horas y ya no cabéis seguidos. No se ha guardado ninguna cita: elige otro rato, por favor."
+        : "Justo ahora alguien ha reservado esa hora. Elige otro horario disponible, por favor.");
       setSelectedTime(null);
       dropHold();
       setStep(dateStepNum);
       return;
     }
 
-    let appt;
+    let appts;
     try {
-      // La duración y el precio los pone el servidor a partir del servicio.
-      // El holdId va con el resto: es lo que le dice al servidor que la
-      // reserva temporal que ocupa esa hora es la de esta misma persona.
-      appt = await createAppointment({
+      // Las horas de cada persona, la duración y el precio los pone el
+      // servidor a partir de los servicios. El holdId va con el resto: es lo
+      // que le dice al servidor que la reserva temporal que ocupa esas horas
+      // es la de esta misma persona.
+      appts = await createAppointment({
         dateKey: dateKey(selectedDate),
         time: selectedTime,
-        service: service.id,
+        people: people.map((p) => ({ service: p.service.id, name: p.name })),
         barberId,
-        name,
         phone,
         email: email.trim() || null,
         holdId: currentHold ? currentHold.id : undefined,
@@ -1203,26 +1274,31 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
       }
       return;
     }
-    // La cita ya está guardada: el servidor ha borrado la reserva temporal.
+    // Las citas ya están guardadas: el servidor ha borrado la reserva temporal.
     holdSeqRef.current += 1;
     holdRef.current = null;
     setHold(null);
     setHoldLeftMs(0);
-    setConfirmedAppt(appt);
+    setConfirmedAppts(appts);
     setSubmitting(false);
     setStep(confirmStepNum);
     if (BARBER_EMAIL) {
+      const detalle = people
+        .map((p, i) => `  ${personTimes[i]} · ${p.name} · ${p.service.name}`)
+        .join("\n");
       sendNotification(
         BARBER_EMAIL,
-        "Nueva cita reservada",
-        `${name} ha reservado una cita:\n\nServicio: ${service.name}\nFecha: ${dateKey(selectedDate)}\nHora: ${selectedTime}\nTeléfono: ${phone}`
+        groupBooking ? `Nueva reserva para ${partySize} personas` : "Nueva cita reservada",
+        `${primaryName} ha reservado:\n\nFecha: ${dateKey(selectedDate)}\n${detalle}\nTeléfono: ${phone}`
       );
     }
   }
 
   async function cancelConfirmed() {
     try {
-      await cancelAppointment(confirmedAppt.id);
+      // Una reserva de grupo se anula entera de una vez.
+      if (confirmedAppt.groupId) await cancelAppointmentGroup(confirmedAppt.groupId);
+      else await cancelAppointment(confirmedAppt.id);
     } catch (e) {
       window.alert(`No se ha podido cancelar: ${e.message}`);
       return;
@@ -1232,7 +1308,7 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
       sendNotification(
         BARBER_EMAIL,
         "Un cliente canceló su cita",
-        `${name} ha cancelado su cita del ${confirmedAppt.dateKey} a las ${confirmedAppt.time} (${service.name}).\nTeléfono: ${phone}`
+        `${primaryName} ha cancelado su ${groupBooking ? `reserva para ${partySize} personas` : "cita"} del ${confirmedAppt.dateKey} a las ${confirmedAppt.time}.\nTeléfono: ${phone}`
       );
     }
   }
@@ -1280,29 +1356,102 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
             </button>
           )}
           <h2 className="display" style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px" }}>Reservar tu cita</h2>
-          <p style={{ color: SMOKE, fontSize: 13, marginBottom: 18 }}>{barberStepEnabled ? `Con ${barberName}. Selecciona qué necesitas hoy.` : "Selecciona qué necesitas hoy."}</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {services.map((s) => (
-              <button key={s.id} onClick={() => { setService(s); setStep(dateStepNum); }} className="card" style={{ textAlign: "left", padding: 16, borderRadius: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 15, color: BONE }}>{s.name}</div>
-                  <div style={{ color: SMOKE, fontSize: 12.5 }}>{s.desc} · {s.duration} min</div>
-                </div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: BONE }}>{s.price}€</div>
-                <ChevronRight size={18} color={GOLD} />
-              </button>
-            ))}
+          <p style={{ color: SMOKE, fontSize: 13, marginBottom: 16 }}>{barberStepEnabled ? `Con ${barberName}. Selecciona qué necesitas hoy.` : "Selecciona qué necesitas hoy."}</p>
+
+          {/* Cuántos venís, encima de los servicios y con el 1 ya marcado:
+              quien viene solo reserva igual que siempre, sin notar el cambio. */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 12.5, color: SMOKE, marginBottom: 8 }}>¿Cuántos venís?</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {Array.from({ length: MAX_PERSONAS }, (_, i) => i + 1).map((n) => {
+                const active = partySize === n;
+                return (
+                  <button key={n} onClick={() => setPartySize(n)} style={{
+                    flex: 1, padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    border: active ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,0.15)",
+                    background: active ? GOLD : "#161513", color: active ? "#111111" : BONE,
+                  }}>{n === 1 ? "1 persona" : `${n} personas`}</button>
+                );
+              })}
+            </div>
+            {groupBooking && (
+              <p style={{ color: SMOKE, fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                Os atendemos seguidos, uno detrás de otro, a partir de la hora que elijáis.
+              </p>
+            )}
           </div>
+
+          {!groupBooking ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {services.map((s) => (
+                <button key={s.id} onClick={() => { setPersonService(0, s); setStep(dateStepNum); }} className="card" style={{ textAlign: "left", padding: 16, borderRadius: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, color: BONE }}>{s.name}</div>
+                    <div style={{ color: SMOKE, fontSize: 12.5 }}>{s.desc} · {s.duration} min</div>
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: BONE }}>{s.price}€</div>
+                  <ChevronRight size={18} color={GOLD} />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <>
+              {/* Cada persona elige su propio servicio: el padre puede llevar
+                  corte + barba y el hijo solo corte. */}
+              {people.map((p, i) => (
+                <div key={i} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: GOLD, marginBottom: 8 }}>Persona {i + 1}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {services.map((s) => {
+                      const active = p.service && p.service.id === s.id;
+                      return (
+                        <button key={s.id} onClick={() => setPersonService(i, s)} className="card" style={{
+                          textAlign: "left", padding: 12, borderRadius: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                          borderColor: active ? GOLD : undefined,
+                          background: active ? "rgba(201,162,39,0.12)" : undefined,
+                        }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: BONE }}>{s.name}</div>
+                            <div style={{ color: SMOKE, fontSize: 12 }}>{s.duration} min</div>
+                          </div>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: BONE }}>{s.price}€</div>
+                          {active && <Check size={16} color={GOLD} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {allServicesChosen && (
+                <div className="card" style={{ padding: 12, borderRadius: 12, fontSize: 12.5, color: SMOKE, marginBottom: 12 }}>
+                  En total: {totalDuration} min · <strong style={{ color: BONE }}>{totalPrice}€</strong>
+                </div>
+              )}
+              <button disabled={!allServicesChosen} onClick={() => setStep(dateStepNum)} className="gold-btn" style={{ width: "100%", padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: allServicesChosen ? "pointer" : "not-allowed" }}>
+                Continuar
+              </button>
+            </>
+          )}
         </div>
       )}
 
       {step === dateStepNum && (
         <div className="fade-in">
           <button onClick={() => setStep(serviceStepNum)} style={{ background: "none", border: "none", color: SMOKE, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: 14, fontSize: 13 }}>
-            <ArrowLeft size={14} /> Cambiar servicio
+            <ArrowLeft size={14} /> {groupBooking ? "Cambiar servicios" : "Cambiar servicio"}
           </button>
           <h2 className="display" style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px" }}>Elige día y hora</h2>
-          <p style={{ color: SMOKE, fontSize: 13, marginBottom: 14 }}>{service.name} · {service.duration} min · {service.price}€{barberStepEnabled ? ` · con ${barberName}` : ""}</p>
+          <p style={{ color: SMOKE, fontSize: 13, marginBottom: 14 }}>
+            {groupBooking
+              ? `${partySize} personas · ${people.map((p) => p.service.name).join(" + ")} · ${totalDuration} min · ${totalPrice}€`
+              : `${service.name} · ${service.duration} min · ${service.price}€`}
+            {barberStepEnabled ? ` · con ${barberName}` : ""}
+          </p>
+          {groupBooking && (
+            <p style={{ color: SMOKE, fontSize: 12, marginTop: -8, marginBottom: 14 }}>
+              Solo salen las horas donde cabéis los {partySize}, seguidos.
+            </p>
+          )}
 
           {bookingError && (
             <div className="card" style={{ padding: 12, borderRadius: 10, fontSize: 12.5, color: "#f2a6a6", border: "1px solid #6b2323", marginBottom: 12 }}>
@@ -1367,9 +1516,25 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
             <ArrowLeft size={14} /> Cambiar hora
           </button>
           <h2 className="display" style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px" }}>Tus datos</h2>
-          <div className="card" style={{ padding: 14, borderRadius: 12, fontSize: 13, color: SMOKE, marginBottom: 18 }}>
-            {service.name} ({service.price}€){barberStepEnabled ? ` · ${barberName}` : ""} · {fmtLong(selectedDate)} · <strong style={{ color: BONE }}>{selectedTime}</strong>
-          </div>
+          {groupBooking ? (
+            <div className="card" style={{ padding: 14, borderRadius: 12, fontSize: 13, color: SMOKE, marginBottom: 18 }}>
+              <div style={{ marginBottom: 8 }}>{fmtLong(selectedDate)}{barberStepEnabled ? ` · ${barberName}` : ""}</div>
+              {people.map((p, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0" }}>
+                  <span>Persona {i + 1} · {p.service.name}</span>
+                  <strong style={{ color: BONE }}>{personTimes[i]}</strong>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, paddingTop: 8, marginTop: 6, borderTop: "1px solid rgba(255,255,255,0.12)" }}>
+                <span>Total</span>
+                <strong style={{ color: BONE }}>{totalPrice}€</strong>
+              </div>
+            </div>
+          ) : (
+            <div className="card" style={{ padding: 14, borderRadius: 12, fontSize: 13, color: SMOKE, marginBottom: 18 }}>
+              {service.name} ({service.price}€){barberStepEnabled ? ` · ${barberName}` : ""} · {fmtLong(selectedDate)} · <strong style={{ color: BONE }}>{selectedTime}</strong>
+            </div>
+          )}
           {hold && (
             <div className="card" style={{ padding: 12, borderRadius: 12, fontSize: 12.5, color: SMOKE, marginBottom: 18, display: "flex", alignItems: "center", gap: 8 }}>
               <Clock size={15} color={GOLD} />
@@ -1379,12 +1544,18 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <label style={{ fontSize: 12, color: SMOKE }}>Nombre
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
-                <User size={15} color={GOLD} />
-                <input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} placeholder="Tu nombre" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
-              </div>
-            </label>
+            {/* Un nombre por persona, para que en el panel se lea "Juan" y
+                "Hugo" y no el mismo nombre dos veces. El teléfono y el correo
+                son de quien reserva, y se piden una sola vez. */}
+            {people.map((p, i) => (
+              <label key={i} style={{ fontSize: 12, color: SMOKE }}>
+                {groupBooking ? `Nombre de la persona ${i + 1} (${p.service.name}, ${personTimes[i]})` : "Nombre"}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
+                  <User size={15} color={GOLD} />
+                  <input value={p.name} onChange={(e) => setPersonName(i, sanitizeName(e.target.value))} placeholder={groupBooking && i > 0 ? "Nombre" : "Tu nombre"} style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
+                </div>
+              </label>
+            ))}
             <label style={{ fontSize: 12, color: SMOKE }}>Teléfono
               <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: `1px solid ${phone && !isPhoneValid(phone) ? "#8a4b4b" : "rgba(255,255,255,0.2)"}`, borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
                 <Phone size={15} color={GOLD} />
@@ -1406,8 +1577,8 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
               )}
             </label>
           </div>
-          <button disabled={!name.trim() || !isPhoneValid(phone) || !isEmailValid(email) || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
-            {submitting ? "Comprobando disponibilidad…" : "Confirmar cita"}
+          <button disabled={!allNamesFilled || !isPhoneValid(phone) || !isEmailValid(email) || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 20, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
+            {submitting ? "Comprobando disponibilidad…" : groupBooking ? "Confirmar las citas" : "Confirmar cita"}
           </button>
         </div>
       )}
@@ -1417,25 +1588,47 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
           <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
             <Check size={26} color={GOLD} />
           </div>
-          <h2 className="display" style={{ fontSize: 22, marginBottom: 4 }}>{cancelled ? "Cita cancelada" : "¡Cita confirmada!"}</h2>
+          <h2 className="display" style={{ fontSize: 22, marginBottom: 4 }}>
+            {cancelled ? (groupBooking ? "Reserva cancelada" : "Cita cancelada") : groupBooking ? "¡Citas confirmadas!" : "¡Cita confirmada!"}
+          </h2>
           {!cancelled ? (
             <>
-              <p style={{ color: SMOKE, fontSize: 13.5, marginBottom: 18 }}>Te esperamos, {name.split(" ")[0]} 👋</p>
+              <p style={{ color: SMOKE, fontSize: 13.5, marginBottom: 18 }}>
+                {groupBooking ? `Os esperamos, ${primaryName.split(" ")[0]} 👋` : `Te esperamos, ${primaryName.split(" ")[0]} 👋`}
+              </p>
               <div className="card" style={{ padding: 18, borderRadius: 14, textAlign: "left", marginBottom: 18 }}>
                 {barberStepEnabled && <Row label="Barbero" value={barberName} />}
-                <Row label="Servicio" value={service.name} />
                 <Row label="Fecha" value={fmtLong(selectedDate)} />
-                <Row label="Hora" value={selectedTime} />
-                <Row label="Duración" value={`${service.duration} min`} />
-                <Row label="Precio" value={`${service.price}€`} />
+                {groupBooking ? (
+                  <>
+                    {/* A qué hora entra cada uno, con su servicio y su precio. */}
+                    {confirmedAppts.map((a, i) => {
+                      const s = services.find((x) => x.id === a.service);
+                      return <Row key={a.id} label={`${a.time} · ${a.name}`} value={`${s ? s.name : ""} · ${a.price != null ? a.price : (s ? s.price : "")}€`} />;
+                    })}
+                    <Row label="Total" value={`${totalPrice}€`} />
+                  </>
+                ) : (
+                  <>
+                    <Row label="Servicio" value={service.name} />
+                    <Row label="Hora" value={selectedTime} />
+                    <Row label="Duración" value={`${service.duration} min`} />
+                    <Row label="Precio" value={`${service.price}€`} />
+                  </>
+                )}
               </div>
 
               {(() => {
+                // El evento del calendario cubre desde que empieza el primero
+                // hasta que acaba el último: un solo evento para todo el grupo.
                 const start = apptDateTime(selectedDate, selectedTime);
-                const end = new Date(start.getTime() + service.duration * 60000);
-                const waLink = buildWhatsAppLink({ name, phone, serviceName: service.name, dateLabel: fmtLong(selectedDate), time: selectedTime });
-                const gcalLink = buildGoogleCalendarLink({ start, end, serviceName: service.name });
-                const icsHref = buildICSDataUri({ start, end, serviceName: service.name });
+                const end = new Date(start.getTime() + totalDuration * 60000);
+                const serviceLabel = groupBooking
+                  ? `${partySize} personas: ${people.map((p) => p.service.name).join(" + ")}`
+                  : service.name;
+                const waLink = buildWhatsAppLink({ name: primaryName, phone, serviceName: serviceLabel, dateLabel: fmtLong(selectedDate), time: selectedTime });
+                const gcalLink = buildGoogleCalendarLink({ start, end, serviceName: serviceLabel });
+                const icsHref = buildICSDataUri({ start, end, serviceName: serviceLabel });
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
                     <a href={waLink} target="_blank" rel="noopener noreferrer" className="gold-btn" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 13, borderRadius: 12, fontWeight: 700, fontSize: 13.5, textDecoration: "none" }}>
@@ -1469,7 +1662,13 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
             <>
               <p style={{ color: SMOKE, fontSize: 13.5, marginBottom: 16 }}>Tu cita ha sido liberada. ¡Esperamos verte pronto!</p>
               <a
-                href={buildCancelWhatsAppLink({ name, phone, serviceName: service.name, dateLabel: fmtLong(selectedDate), time: selectedTime })}
+                href={buildCancelWhatsAppLink({
+                  name: primaryName,
+                  phone,
+                  serviceName: groupBooking ? `${partySize} personas: ${people.map((p) => p.service.name).join(" + ")}` : service.name,
+                  dateLabel: fmtLong(selectedDate),
+                  time: selectedTime,
+                })}
                 target="_blank" rel="noopener noreferrer"
                 className="gold-btn"
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 13, borderRadius: 12, fontWeight: 700, fontSize: 13.5, textDecoration: "none" }}
@@ -1479,7 +1678,9 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
               <p style={{ fontSize: 11, color: SMOKE, marginTop: 8 }}>Así el barbero se entera al momento.</p>
             </>
           )}
-          <button onClick={() => { dropHold(); setStep(1); setBarberId(singleBarber ? barbers[0].id : null); setService(null); setSelectedDate(null); setSelectedTime(null); setName(""); setPhone(""); setConfirmedAppt(null); setCancelled(false); setBookingError(null); }}
+          {/* Volver a empezar deja la pantalla como recién abierta: una sola
+              persona, sin servicio y sin nombres. */}
+          <button onClick={() => { dropHold(); setStep(1); setBarberId(singleBarber ? barbers[0].id : null); setPeople([{ service: null, name: "" }]); setSelectedDate(null); setSelectedTime(null); setPhone(""); setConfirmedAppts(null); setCancelled(false); setBookingError(null); }}
             style={{ background: "none", border: "none", color: GOLD, fontSize: 13, marginTop: 18, cursor: "pointer" }}>
             Reservar otra cita
           </button>

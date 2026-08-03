@@ -27,6 +27,12 @@ export function appointmentOut(r) {
   // al cargar: se rellenan aquí con lo que vale el servicio hoy.
   if (r.duration_minutes != null) out.duration = r.duration_minutes;
   if (r.price != null) out.price = Number(r.price);
+  // Una cita reservada junto a otras. NULL en las dos columnas = cita suelta,
+  // que es lo que son casi todas y lo que no lleva ninguno de estos campos.
+  if (r.group_id != null) {
+    out.groupId = r.group_id;
+    out.groupPosition = r.group_position;
+  }
   return out;
 }
 
@@ -50,8 +56,8 @@ export function busyBlockOut(r, durationMinutes) {
 // reconozca. No lleva el teléfono ni el correo: quien pregunta ya sabe el
 // teléfono, y devolvérselo solo sirve para confirmarle a alguien que ese
 // número tiene citas.
-export function myAppointmentOut(r, durationMinutes) {
-  return {
+export function myAppointmentOut(r, durationMinutes, groupSize) {
+  const out = {
     id: r.id,
     dateKey: r.appointment_date,
     time: String(r.start_time).slice(0, 5),
@@ -61,6 +67,16 @@ export function myAppointmentOut(r, durationMinutes) {
     duration: durationMinutes,
     price: r.price != null ? Number(r.price) : null,
   };
+  // Si la cita se reservó junto a otras, va con lo justo para pintarlas
+  // juntas: de qué grupo es, en qué puesto entra y cuántas quedan en pie.
+  // Quien pregunta ya ha demostrado saber el teléfono entero, que es toda la
+  // identidad que hay aquí.
+  if (r.group_id != null) {
+    out.groupId = r.group_id;
+    out.groupPosition = r.group_position;
+    out.groupSize = groupSize;
+  }
+  return out;
 }
 
 // Las dos filas migradas antiguas no guardan duración. No se inventa: se toma
