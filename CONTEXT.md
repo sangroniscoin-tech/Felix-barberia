@@ -51,7 +51,9 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
 - **No customer accounts and no passwords.** A name and a phone is the whole identity.
   Félix's own panel password is the one exception, and it lives in Vercel, not the code.
 - **No payments.** Nobody pays through the app.
-- **No tests, linter or formatter.** Not an oversight to fix in passing — see `ADR.md`.
+- **No cookie banner, and that is correct.** No analytics, no trackers, nothing in
+  `localStorage` or `document.cookie` — only the admin session, which is strictly
+  necessary. Adding a banner would be theatre, and the privacy notice says so in writing.
 - **The gallery photos still come from the code**, not from the database. Uploading them
   needs file storage; it was left out of the Supabase migration on purpose.
 - What the client is offered and declines belongs here as it happens, so it is never

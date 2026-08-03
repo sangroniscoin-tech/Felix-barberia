@@ -62,8 +62,13 @@ endorsement.
 - The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
   It was found **in the trash** during the migration; restoring it is the only reason the
   data survived. Never write to it, never delete it, never let it be trashed again.
-- Migrated rows keep `raw_name`, `raw_phone`, `raw_email` and `source`. Customer data is
-  never put in a recorded migration — migrations travel into backups and checkouts.
+- Customer data never goes in a recorded migration — migrations travel into backups and
+  checkouts. Migrated rows keep `raw_name`, `raw_phone`, `raw_email` and `source`.
+- The privacy notice's responsible-party block — name, NIF, domicile, contact email — is
+  **public by legal obligation**, not a credential that leaked into `src/`. Leave it there.
+  That page also promises the data is deleted a year after the appointment, and **nothing
+  deletes it**: Félix does it by hand from his panel. Automating it or rewording the
+  promise are the only two honest options; letting it drift is not one.
 - `BARBER_EMAIL` is empty, so the barber-side cancellation notice never sends. The code
   path exists and looks like it works.
 
