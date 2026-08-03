@@ -2,11 +2,6 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail } from "lucide-react";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
-// Correo de la barbería, al que llegan los avisos de que un cliente ha
-// reservado o ha cancelado. Esos avisos llevan dentro el nombre y el teléfono
-// del cliente, y por eso el aviso de privacidad lo dice. Es un correo de
-// negocio, público, no una credencial: no va en variables de entorno.
-const BARBER_EMAIL = "felixbarberiazgz@gmail.com";
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
 const MAPS_LINK = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(SHOP_ADDRESS)}`;
 
@@ -19,9 +14,10 @@ const RESPONSABLE_NIF = "61564701A";
 const RESPONSABLE_DOMICILIO = "Calle Cereros 22, 50003 Zaragoza";
 // El correo al que un cliente escribe para ejercer sus derechos. Es la vía
 // principal del aviso; el WhatsApp y el domicilio siguen valiendo igual.
-// Ojo: no es `BARBER_EMAIL`. Hoy valen lo mismo, pero son dos cosas distintas
-// —a dónde llegan los avisos, y a dónde escribe un cliente para ejercer sus
-// derechos— y el día que Félix quiera separarlas no deben moverse juntas.
+// A dónde llegan los avisos ya no se decide aquí: lo lleva fijo dentro el
+// script de Google, que es lo que impide que cualquiera lo use para escribir a
+// quien quiera. Éste es otra cosa —a dónde escribe un cliente para ejercer sus
+// derechos— y es el único que sigue viviendo en el código.
 const RESPONSABLE_EMAIL = "felixbarberiazgz@gmail.com";
 // Se cambia a mano cuando se cambie el texto del aviso.
 const PRIVACIDAD_ACTUALIZADO = "3 de agosto de 2026";
@@ -193,14 +189,6 @@ function utcCompact(d) {
 }
 
 // ----- almacenamiento compartido: todos los clientes y el barbero ven los mismos datos -----
-// ====== Google Sheets como base de datos ======
-// 1. Crea una hoja de Google nueva.
-// 2. Ve a Extensiones → Apps Script, borra el contenido y pega el código de "google-apps-script.gs"
-//    (te lo he dejado como archivo aparte).
-// 3. Implementar → Nueva implementación → Aplicación web → Ejecutar como "Yo" → Acceso "Cualquier usuario".
-// 4. Copia la URL que te da y pégala aquí abajo, entre las comillas:
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbyF4j9RdthndhkqTrLADCahcU09mCafFxJ3RGMuLiAtnQQUwKc6VbqvUVfxG6rfc942/exec";
-
 // ====== Modo mantenimiento ======
 // Congela TODAS las escrituras. Se usó para migrar de Google Sheets a Supabase;
 // se queda para la próxima vez que haga falta una ventana de congelación.
@@ -302,26 +290,6 @@ async function apiSend(path, method, payload, { auth = false } = {}) {
     throw err;
   }
   return body;
-}
-
-// El correo de aviso lo manda el Apps Script antiguo, que sigue en pie solo
-// para esto. Mover los avisos fuera de Google es una petición aparte.
-// No espera respuesta y se traga los errores a propósito: un correo que falla
-// no puede tumbar una reserva. La consecuencia —que un fallo de envío es
-// invisible— es conocida y se acepta; no añadir reintentos ni avisos.
-async function sendNotification(to, subject, message) {
-  if (MAINTENANCE_MODE) return false;
-  if (!SHEETS_API_URL || !to) return false;
-  try {
-    await fetch(SHEETS_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "notify", to, subject, message }),
-    });
-    return true;
-  } catch (e) {
-    return false;
-  }
 }
 
 // ---- Saneado en el navegador ----
@@ -1145,7 +1113,7 @@ function Privacidad({ embedded = false }) {
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li><strong style={{ color: BONE }}>Supabase</strong> — la base de datos donde se guardan las citas. Los servidores están en la Unión Europea (Irlanda, <span style={{ whiteSpace: "nowrap" }}>eu-west-1</span>).</li>
           <li><strong style={{ color: BONE }}>Vercel</strong> — donde está alojada esta web.</li>
-          <li><strong style={{ color: BONE }}>Google (Gmail)</strong> — para dos cosas: enviarte a ti el correo que avisa de una cancelación, solo si nos has dado un correo; y avisar a la barbería de las reservas y de las cancelaciones, correos que llevan dentro <strong style={{ color: BONE }}>tu nombre y tu teléfono</strong>.</li>
+          <li><strong style={{ color: BONE }}>Google (Gmail)</strong> — para avisar a la barbería de que alguien ha reservado o ha cancelado. Ese aviso lleva <strong style={{ color: BONE }}>solo el día, la hora y el servicio</strong>: ni tu nombre, ni tu teléfono, ni tu correo. Para saber de quién es la cita, la barbería entra en su panel. <strong style={{ color: BONE }}>Ningún dato tuyo sale hacia Gmail.</strong></li>
         </ul>
         <p style={{ margin: "8px 0 0" }}>
           <strong style={{ color: BONE }}>No vendemos ni cedemos tus datos a nadie más</strong>, no te
@@ -1641,16 +1609,9 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     setConfirmedAppts(appts);
     setSubmitting(false);
     setStep(confirmStepNum);
-    if (BARBER_EMAIL) {
-      const detalle = people
-        .map((p, i) => `  ${personTimes[i]} · ${p.name} · ${p.service.name}`)
-        .join("\n");
-      sendNotification(
-        BARBER_EMAIL,
-        groupBooking ? `Nueva reserva para ${partySize} personas` : "Nueva cita reservada",
-        `${primaryName} ha reservado:\n\nFecha: ${dateKey(selectedDate)}\n${detalle}\nTeléfono: ${phone}`
-      );
-    }
+    // El aviso a la barbería lo manda el servidor al guardar la cita. Aquí no
+    // se manda nada: desde el navegador, quien cerraba la pestaña deprisa se
+    // quedaba sin avisar.
   }
 
   async function cancelConfirmed() {
@@ -1663,13 +1624,6 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
       return;
     }
     setCancelled(true);
-    if (BARBER_EMAIL) {
-      sendNotification(
-        BARBER_EMAIL,
-        "Un cliente canceló su cita",
-        `${primaryName} ha cancelado su ${groupBooking ? `reserva para ${partySize} personas` : "cita"} del ${confirmedAppt.dateKey} a las ${confirmedAppt.time}.\nTeléfono: ${phone}`
-      );
-    }
   }
 
   function canCancel(appt) {
@@ -2196,14 +2150,6 @@ function MisCitas({ services, barbers, cancelAppointment, cancelAppointmentGroup
       return;
     }
     setCancelledIds((prev) => ({ ...prev, [appt.id]: true }));
-    if (BARBER_EMAIL) {
-      const svc = services.find((s) => s.id === appt.service);
-      sendNotification(
-        BARBER_EMAIL,
-        "Un cliente canceló su cita",
-        `${appt.name} ha cancelado su cita del ${appt.dateKey} a las ${appt.time} (${svc?.name || appt.service}).\nTeléfono: ${phone}`
-      );
-    }
   }
 
   // Anular la reserva entera: una sola petición con el identificador del grupo,
@@ -2221,13 +2167,6 @@ function MisCitas({ services, barbers, cancelAppointment, cancelAppointmentGroup
       for (const c of citas) next[c.id] = true;
       return next;
     });
-    if (BARBER_EMAIL) {
-      sendNotification(
-        BARBER_EMAIL,
-        "Un cliente canceló su reserva",
-        `${citas[0].name} ha cancelado la reserva de ${citas.length} personas del ${citas[0].dateKey} a las ${citas[0].time}.\nTeléfono: ${phone}`
-      );
-    }
   }
 
   function canCancel(appt) {
@@ -2615,14 +2554,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     // El panel tiene su propia copia de las citas: hay que releerla, la
     // pública no le sirve.
     await refreshAppointments();
-    if (appt && appt.email) {
-      const svc = services.find((s) => s.id === appt.service);
-      sendNotification(
-        appt.email,
-        "Tu cita en Félix Barbería ha sido cancelada",
-        `Hola ${appt.name},\n\nTu cita del ${appt.dateKey} a las ${appt.time} (${svc?.name || appt.service}) ha sido cancelada por la barbería.\n\nSi quieres reservar otra fecha, escríbenos por WhatsApp: https://wa.me/${BARBER_WHATSAPP}\n\nFélix Barbería`
-      );
-    }
+    // Antes se le mandaba un correo al cliente desde aquí. Ya no: el script de
+    // Google no acepta destinatario —lo lleva fijo dentro, que es lo que impide
+    // que cualquiera lo use para escribir a quien quiera— así que avisar al
+    // cliente necesita su propia solución. Hasta entonces, Félix llama o manda
+    // un WhatsApp, que es lo que hacía de todas formas.
   }
 
   // Un único camino para marcar si vino o no, lo pidan la ficha o la lista del

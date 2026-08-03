@@ -11,6 +11,30 @@ import {
 import { conflictingHold } from "./_lib/holds.js";
 import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
+import { notifyShop, bookingNotice, cancellationNotice } from "./_lib/notify.js";
+
+// Manda el aviso a la barbería. Nunca lanza y nunca se le deja romper la
+// respuesta: si el correo falla, la cita ya está guardada, que es lo único
+// que aquí no puede fallar.
+//
+// No se avisa de lo que hace el propio Félix desde su panel: ya lo sabe, y un
+// correo por cada cita que apunta a mano es ruido. Sólo de lo que hacen los
+// clientes por la web.
+async function tellShop(supabase, appointments, kind, req) {
+  try {
+    if (requireAdmin(req) === null) return;
+    if (!appointments || appointments.length === 0) return;
+    const ids = [...new Set(appointments.map((a) => a.service))];
+    const { data } = await supabase.from("services").select("id,name").in("id", ids);
+    const names = Object.fromEntries((data || []).map((s) => [s.id, s.name]));
+    const notice = kind === "cancelled"
+      ? cancellationNotice(appointments, names)
+      : bookingNotice(appointments, names);
+    await notifyShop(notice.subject, notice.message);
+  } catch (e) {
+    console.warn("[notify] aviso no enviado:", e.message);
+  }
+}
 
 // Cuánta gente puede meter QUIEN ESTÁ PIDIENDO. Con un pase de administrador
 // válido, cinco: es Félix apuntando lo que le piden por teléfono, y él sabe lo
@@ -168,6 +192,7 @@ export default async function handler(req, res) {
       }
 
       const out = (data || []).map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
+      await tellShop(supabase, out, "booked", req);
       // `appointment` en singular sigue siendo la primera: es lo que espera
       // todo lo que ya llamaba a esta ruta antes de que existieran los grupos.
       return res.status(201).json({ ok: true, appointment: out[0], appointments: out });
@@ -198,7 +223,9 @@ export default async function handler(req, res) {
         if (!data || data.length === 0) {
           return res.status(404).json({ ok: false, reason: "not_found", message: "Esa reserva ya no existe." });
         }
-        return res.status(200).json({ ok: true, appointments: data.map(appointmentOut) });
+        const cancelled = data.map(appointmentOut);
+        await tellShop(supabase, cancelled, "cancelled", req);
+        return res.status(200).json({ ok: true, appointments: cancelled });
       } catch (e) {
         return fail(res, e);
       }
@@ -216,7 +243,12 @@ export default async function handler(req, res) {
       if (error || !data) {
         return res.status(404).json({ ok: false, reason: "not_found", message: "Esa cita ya no existe." });
       }
-      return res.status(200).json({ ok: true, appointment: appointmentOut(data) });
+      const appt = appointmentOut(data);
+      // Sólo una cancelación se avisa. Este mismo PATCH sirve para marcar
+      // "no se presentó" y para quitar esa marca, y de eso no hay nada que
+      // contar por correo: lo acaba de hacer Félix mirando la pantalla.
+      if (status === "cancelled") await tellShop(supabase, [appt], "cancelled", req);
+      return res.status(200).json({ ok: true, appointment: appt });
     } catch (e) {
       return fail(res, e);
     }
