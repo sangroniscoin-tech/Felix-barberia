@@ -208,6 +208,44 @@ function citaDelHueco(lista, dia, hora) {
   return iguales.slice().sort((a, b) => (a.groupPosition || 1) - (b.groupPosition || 1))[0];
 }
 
+// La cancelación de ese hueco. Entre varias, la MÁS RECIENTE: es de la que
+// acaban de avisar. Una sin fecha —cancelada antes de que se guardara ese
+// dato— se queda la última, que es lo único honrado que se puede hacer con
+// una fecha que nadie apuntó.
+function cancelacionDelHueco(lista, dia, hora) {
+  const iguales = (lista || []).filter((a) => a.dateKey === dia && a.time === hora);
+  if (iguales.length === 0) return null;
+  const orden = iguales.slice().sort((a, b) => {
+    const ta = a.cancelledAt ? Date.parse(a.cancelledAt) : -Infinity;
+    const tb = b.cancelledAt ? Date.parse(b.cancelledAt) : -Infinity;
+    if (ta !== tb) return tb - ta;
+    return (a.groupPosition || 1) - (b.groupPosition || 1);
+  });
+  // La marca que hace su ficha de sólo lectura: no hay nada que cancelar ni
+  // nadie a quien esperar.
+  return { ...orden[0], cancelada: true };
+}
+
+// A quién enseñar. Se busca primero entre las del tipo que dice el aviso y
+// después entre las del otro:
+//
+// - un aviso de CANCELACIÓN tiene que enseñar a quien canceló aunque otro
+//   cliente ya haya cogido ese hueco;
+// - un aviso de RESERVA tiene que encontrar igual a quien reservó aunque
+//   desde entonces haya cancelado, marcado como cancelado, en vez de fallar.
+function resolverCitaDelAviso(enPie, canceladas, destino) {
+  const viva = () => citaDelHueco(enPie, destino.dia, destino.hora);
+  const muerta = () => cancelacionDelHueco(canceladas, destino.dia, destino.hora);
+  return destino.tipo === "cancelada" ? (muerta() || viva()) : (viva() || muerta());
+}
+
+// "3 de agosto a las 19:24". Para decir cuándo se canceló una cita.
+function fmtMomento(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getDate()} de ${MESES[d.getMonth()]} a las ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 function limpiarUrlDelAviso() {
   if (typeof window === "undefined" || !window.history || !window.history.replaceState) return;
   try {
@@ -600,6 +638,26 @@ export default function FelixBarberiaApp() {
     }
   }
 
+  // Las citas CANCELADAS de un día concreto. Sólo se piden llegando desde un
+  // aviso: el panel no tiene ninguna pantalla de canceladas, ni entran en la
+  // agenda, ni en el buscador, ni en ninguna cifra. Sin el parámetro,
+  // /api/admin-data devuelve exactamente lo que devolvía siempre.
+  //
+  // Nunca lanza: un aviso que no sepa a dónde llevar no puede dejar el panel a
+  // medias. Si no llegan, se aterriza en el día y se dice en una línea.
+  async function loadCancelledFor(dia) {
+    try {
+      const d = await apiGet(`/api/admin-data?canceladas=${encodeURIComponent(dia)}`, { auth: true });
+      return d.cancelled || [];
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) {
+        clearAdminSession();
+        setAdminEpoch((n) => n + 1);
+      }
+      return [];
+    }
+  }
+
   // Crea una cita, o el grupo entero si son varias personas. Devuelve SIEMPRE
   // una lista con las citas creadas, o lanza un error con un mensaje que se
   // puede enseñar tal cual.
@@ -757,7 +815,7 @@ export default function FelixBarberiaApp() {
         {view === "privacidad" && <Privacidad />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -2450,7 +2508,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2504,14 +2562,25 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     const dia = dateFromKey(avisoDestino.dia);
     if (dia) setCursorDate(dia);
 
-    const cita = citaDelHueco(appointments, avisoDestino.dia, avisoDestino.hora);
-    if (cita) {
-      setSelectedAppt(cita);
-      setAvisoNota(null);
-    } else {
-      setAvisoNota(`No se ha encontrado la cita de las ${avisoDestino.hora} de este día: puede que ya no exista.`);
-    }
-    if (onAvisoAplicado) onAvisoAplicado();
+    let vivo = true;
+    (async () => {
+      // Las canceladas de ese día hacen falta en los dos casos: para enseñar a
+      // quien canceló, y para que una reserva que desde entonces se ha
+      // cancelado se encuentre igual en vez de dar un error.
+      const canceladas = loadCancelledFor ? await loadCancelledFor(avisoDestino.dia) : [];
+      if (!vivo) return;
+      const cita = resolverCitaDelAviso(appointments, canceladas, avisoDestino);
+      if (cita) {
+        setSelectedAppt(cita);
+        setAvisoNota(null);
+      } else {
+        setAvisoNota(`No se ha encontrado la cita de las ${avisoDestino.hora} de este día: puede que ya no exista.`);
+      }
+      // La dirección se limpia cuando ya se ha aterrizado, no antes: si algo
+      // falla por el camino, al menos no queda a medias en la barra.
+      if (onAvisoAplicado) onAvisoAplicado();
+    })();
+    return () => { vivo = false; };
   }, [avisoDestino, authed, dataLoaded, appointments]);
 
   function apptsForDate(d) {
@@ -3589,11 +3658,17 @@ function ModalShell({ title, onClose, children }) {
   );
 }
 
+// La ficha de una cita cancelada es de SÓLO LECTURA: se ve quién era y se le
+// puede llamar —que es justo para lo que se abre desde un aviso— pero no lleva
+// "Cancelar cita" ni "Marcar como no se presentó". No hay nada que cancelar ni
+// nadie a quien esperar, y ofrecerlo sería ofrecer un botón que miente.
 function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow }) {
   const s = services.find((x) => x.id === appt.service);
   const b = barbers?.find((x) => x.id === appt.barberId);
+  const cancelada = !!appt.cancelada;
+  const cuando = cancelada && appt.cancelledAt ? fmtMomento(appt.cancelledAt) : null;
   return (
-    <ModalShell title={appt.groupId ? "Cita de una reserva de grupo" : "Cita"} onClose={onClose}>
+    <ModalShell title={cancelada ? "Cita cancelada" : appt.groupId ? "Cita de una reserva de grupo" : "Cita"} onClose={onClose}>
       <Row label="Cliente" value={shownName(appt)} />
       <Row label="Teléfono" value={shownPhone(appt)} />
       {/* Cancelar aquí quita SOLO a esta persona: las demás del grupo se quedan
@@ -3609,23 +3684,32 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
       <Row label="Precio" value={`${s?.price}€`} />
       <Row label="Fecha" value={appt.dateKey} />
       <Row label="Hora" value={appt.time} />
-      {appt.groupId && groupSize > 1 && (
+      {!cancelada && appt.groupId && groupSize > 1 && (
         <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(201,162,39,0.12)", color: SMOKE, fontSize: 12 }}>
           Vinieron juntos: {groupSize} personas seguidas con el mismo teléfono. Cancelar aquí quita solo a esta persona.
         </div>
       )}
-      {appt.noShow && (
+      {!cancelada && appt.noShow && (
         <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12, textAlign: "center" }}>
           Marcado como "no se presentó"
         </div>
       )}
+      {cancelada && (
+        <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12, textAlign: "center" }}>
+          {cuando ? `Esta cita se canceló el ${cuando}` : "Esta cita está cancelada"}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <a href={`tel:${appt.phone.replace(/\s/g, "")}`} className="ghost-btn" style={{ flex: 1, textAlign: "center", padding: 12, borderRadius: 10, fontSize: 13, textDecoration: "none", color: BONE }}>Llamar</a>
-        <button onClick={onCancel} style={{ flex: 1, background: "#3a1414", border: "1px solid #6b2323", color: "#f2a6a6", padding: 12, borderRadius: 10, fontSize: 13, cursor: "pointer" }}>Cancelar cita</button>
+        <a href={`tel:${String(appt.phone || "").replace(/\s/g, "")}`} className="ghost-btn" style={{ flex: 1, textAlign: "center", padding: 12, borderRadius: 10, fontSize: 13, textDecoration: "none", color: BONE }}>Llamar</a>
+        {!cancelada && (
+          <button onClick={onCancel} style={{ flex: 1, background: "#3a1414", border: "1px solid #6b2323", color: "#f2a6a6", padding: 12, borderRadius: 10, fontSize: 13, cursor: "pointer" }}>Cancelar cita</button>
+        )}
       </div>
-      <button onClick={onToggleNoShow} className="ghost-btn" style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
-        {appt.noShow ? "Quitar marca de no presentado" : "Marcar como no se presentó"}
-      </button>
+      {!cancelada && (
+        <button onClick={onToggleNoShow} className="ghost-btn" style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
+          {appt.noShow ? "Quitar marca de no presentado" : "Marcar como no se presentó"}
+        </button>
+      )}
     </ModalShell>
   );
 }

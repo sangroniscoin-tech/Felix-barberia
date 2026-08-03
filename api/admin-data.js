@@ -9,6 +9,14 @@ import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { appointmentOut, waitlistOut } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 
+// Un día, o nada. Lo que llegue en la query lo escribe quien quiera: si no es
+// exactamente una fecha, no se consulta nada — nunca se mete en la consulta
+// tal cual. Se valida aquí, en el servidor, como todo lo demás.
+function pedirDia(valor) {
+  if (typeof valor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) return null;
+  return valor;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
 
@@ -19,22 +27,47 @@ export default async function handler(req, res) {
   try {
     const supabase = getSupabase();
 
-    const [appointments, waitlist] = await Promise.all([
+    // Las canceladas de UN día, y sólo si se piden. Es lo que deja que tocar
+    // un aviso de cancelación abra la ficha de quien canceló: sin esto no hay
+    // forma de volver a verle, porque la consulta de siempre las excluye.
+    //
+    // Un día concreto y no todas: el panel no tiene ninguna pantalla de
+    // canceladas —eso es otra tarea— y lo que no hace falta no se sirve.
+    const dia = pedirDia(req.query && req.query.canceladas);
+
+    const consultas = [
+      // Esta consulta NO cambia. El dinero, los recuentos, los rankings y la
+      // lista del día salen de aquí, y las canceladas siguen fuera de todos.
       supabase.from("appointments").select("*").eq("is_sample_data", false).neq("status", "cancelled"),
       supabase.from("waitlist").select("*").order("created_at"),
-    ]);
-    for (const r of [appointments, waitlist]) {
-      if (r.error) throw new Error(r.error.message);
+    ];
+    if (dia) {
+      consultas.push(
+        supabase.from("appointments").select("*")
+          .eq("is_sample_data", false)
+          .eq("status", "cancelled")
+          .eq("appointment_date", dia)
+      );
+    }
+
+    const [appointments, waitlist, cancelled] = await Promise.all(consultas);
+    for (const r of [appointments, waitlist, cancelled]) {
+      if (r && r.error) throw new Error(r.error.message);
     }
 
     // Datos personales: no se cachean en ningún sitio, nunca.
     res.setHeader("Cache-Control", "no-store, private");
 
-    return res.status(200).json({
+    const salida = {
       ok: true,
       appointments: appointments.data.map(appointmentOut),
       waitlist: waitlist.data.map(waitlistOut),
-    });
+    };
+    // Sin el parámetro, la respuesta es exactamente la de siempre: ni un campo
+    // más. Quien no pregunta por canceladas no se entera de que existen.
+    if (dia) salida.cancelled = cancelled.data.map(appointmentOut);
+
+    return res.status(200).json(salida);
   } catch (e) {
     return fail(res, e);
   }
