@@ -1148,7 +1148,14 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
 
   const preselected = initialServiceId ? services.find((s) => s.id === initialServiceId) : null;
 
-  const [step, setStep] = useState(preselected ? (barberStepEnabled ? 1 : dateStepNum) : 1);
+  // Un servicio tocado en la portada NO adelanta el paso. Antes sí lo hacía, y
+  // como aquí hay un solo barbero el paso de barbero está apagado: el atajo
+  // aterrizaba directamente en el calendario y se saltaba la única pantalla
+  // donde está "¿Cuántos venís?". Quien tocaba "Solo barba" no podía reservar
+  // para dos. Ahora se entra siempre por el principio —barbero si hay varios,
+  // servicio si hay uno solo— y lo único que trae el atajo es la persona 1 con
+  // su servicio ya marcado.
+  const [step, setStep] = useState(1);
   const [barberId, setBarberId] = useState(singleBarber ? barbers[0].id : null);
   // Quiénes vienen: una persona (lo de siempre) o hasta tres. Cada una lleva su
   // servicio y su nombre; el teléfono y el correo son de quien reserva y van
@@ -1474,18 +1481,40 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
           </div>
 
           {!groupBooking ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {services.map((s) => (
-                <button key={s.id} onClick={() => { setPersonService(0, s); setStep(dateStepNum); }} className="card" style={{ textAlign: "left", padding: 16, borderRadius: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 15, color: BONE }}>{s.name}</div>
-                    <div style={{ color: SMOKE, fontSize: 12.5 }}>{s.desc} · {s.duration} min</div>
-                  </div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: BONE }}>{s.price}€</div>
-                  <ChevronRight size={18} color={GOLD} />
+            <>
+              {/* Tocar una tarjeta sigue llevando al calendario de un toque, que
+                  es el camino de siempre. Lo que se añade es que se vea cuál
+                  está marcada, porque por el atajo de la portada se llega aquí
+                  con una ya elegida. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {services.map((s) => {
+                  const active = service && service.id === s.id;
+                  return (
+                    <button key={s.id} onClick={() => { setPersonService(0, s); setStep(dateStepNum); }} className="card" style={{
+                      textAlign: "left", padding: 16, borderRadius: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 14,
+                      borderColor: active ? GOLD : undefined,
+                      background: active ? "rgba(201,162,39,0.12)" : undefined,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 15, color: BONE }}>{s.name}</div>
+                        <div style={{ color: SMOKE, fontSize: 12.5 }}>{s.desc} · {s.duration} min</div>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: BONE }}>{s.price}€</div>
+                      {active ? <Check size={18} color={GOLD} /> : <ChevronRight size={18} color={GOLD} />}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Con un servicio ya marcado hace falta una salida evidente al
+                  calendario que no obligue a volver a tocar la misma tarjeta.
+                  Sin nada marcado no aparece: quien entra por "Reservar" ve
+                  exactamente la pantalla de siempre. */}
+              {service && (
+                <button onClick={() => setStep(dateStepNum)} className="gold-btn" style={{ width: "100%", padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer", marginTop: 16 }}>
+                  Continuar
                 </button>
-              ))}
-            </div>
+              )}
+            </>
           ) : (
             <>
               {/* Cada persona elige su propio servicio: el padre puede llevar
