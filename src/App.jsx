@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail } from "lucide-react";
+// El plazo de reserva sale de un único sitio, compartido con el servidor. La
+// página no puede ofrecer un día que `POST /api/appointments` vaya a rechazar.
+import { DIAS_MAX_RESERVA } from "../shared/plazo-reserva.js";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
@@ -1651,7 +1654,10 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
 
   const days = useMemo(() => {
     const arr = [];
-    for (let i = 0; i < 14; i++) {
+    // Hoy y los DIAS_MAX_RESERVA siguientes: el mismo plazo que hace cumplir el
+    // servidor, leído del mismo sitio. Nunca se ofrece un día que la reserva
+    // vaya a rechazar después.
+    for (let i = 0; i <= DIAS_MAX_RESERVA; i++) {
       const d = addDays(new Date(), i);
       arr.push({ date: d, closed: isDayFullyBlocked(d) });
     }
