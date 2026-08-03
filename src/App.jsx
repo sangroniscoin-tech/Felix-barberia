@@ -45,29 +45,16 @@ const GOLD_LIGHT = "#E8C766";
 const BONE = "#F4F4F2";
 const SMOKE = "#9C9C9C";
 
-const DEFAULT_SERVICES = [
-  { id: "corte", name: "Corte de pelo", duration: 30, desc: "Corte clásico o degradado", price: 15 },
-  { id: "barba", name: "Solo barba", duration: 30, desc: "Arreglo y perfilado de barba", price: 10 },
-  { id: "corte_barba", name: "Corte + Barba", duration: 45, desc: "Corte completo y arreglo de barba", price: 22 },
-];
+// Aquí vivían unos servicios, un barbero y un horario escritos a mano. La web
+// arrancaba con ellos y medio segundo después los cambiaba por los de verdad:
+// se leían 15 €, 10 € y 22 € donde valen 12 €, 8 € y 17 €. Un precio falso, aunque
+// dure medio segundo, es un precio que alguien puede leer. Ya no existe ninguno:
+// el estado arranca vacío y, mientras llega /api/bootstrap, se enseña un hueco
+// gris. No los devuelvas ni comentados.
 
-const DEFAULT_BARBERS = [
-  { id: "felix", name: "Félix", photo: null },
-];
-
-const DEFAULT_PORTFOLIO = [];
-const DEFAULT_WAITLIST = [];
-
-// 0=Domingo ... 6=Sábado
-const DEFAULT_SCHEDULE = {
-  0: [],
-  1: [["09:30", "13:30"], ["16:30", "19:30"]],
-  2: [["09:30", "13:30"], ["16:30", "19:30"]],
-  3: [["09:30", "13:30"], ["16:30", "19:30"]],
-  4: [["09:30", "13:30"], ["16:30", "19:30"]],
-  5: [["09:30", "13:30"], ["16:30", "19:30"]],
-  6: [["09:30", "14:00"]],
-};
+// 0=Domingo ... 6=Sábado. Los siete días vacíos: no es "cerrado toda la semana",
+// es "todavía no se sabe", y por eso nunca se pinta sin `loaded`.
+const EMPTY_SCHEDULE = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
 
 const DIAS_CORTOS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -401,26 +388,10 @@ function buildICSDataUri({ start, end, serviceName }) {
   return `data:text/calendar;charset=utf8,${encodeURIComponent(ics)}`;
 }
 
-// ----- datos iniciales de ejemplo (en memoria) -----
-const today = new Date();
-const initialAppointments = [
-  { id: "a1", dateKey: dateKey(today), time: "09:30", service: "corte", barberId: "felix", name: "Pedro Gómez", phone: "612 345 111" },
-  { id: "a2", dateKey: dateKey(today), time: "10:30", service: "corte_barba", barberId: "felix", name: "Miguel Ángel Ruiz", phone: "612 345 222" },
-  { id: "a3", dateKey: dateKey(today), time: "11:30", service: "corte", barberId: "felix", name: "Antonio Vidal", phone: "612 345 333" },
-  { id: "a4", dateKey: dateKey(today), time: "12:00", service: "corte", barberId: "felix", name: "Sergio Ibáñez", phone: "612 345 444" },
-  { id: "a5", dateKey: dateKey(addDays(today, 1)), time: "17:00", service: "corte_barba", barberId: "felix", name: "Pedro Gómez", phone: "612 345 111" },
-  { id: "a6", dateKey: dateKey(addDays(today, -20)), time: "10:00", service: "corte", barberId: "felix", name: "Pedro Gómez", phone: "612 345 111" },
-  { id: "a7", dateKey: dateKey(addDays(today, -10)), time: "10:00", service: "corte", barberId: "felix", name: "Pedro Gómez", phone: "612 345 111" },
-];
-
-const initialBlockedRanges = [
-  // horas concretas bloqueadas: { dateKey, start, end, label }
-];
-const initialBlockedDays = []; // fechas completas cerradas (vacaciones sueltas)
-const initialFestivos = [`${today.getFullYear()}-12-25`];
-const initialVacationRanges = [
-  // { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD', label }
-];
+// Aquí vivían unas citas de ejemplo con nombres y teléfonos inventados y un
+// festivo de Navidad que nadie había puesto. Se enseñaban en el panel y contaban
+// como horas ocupadas hasta que respondía /api/bootstrap. Fuera: lo que no ha
+// llegado del servidor no se pinta.
 
 export default function FelixBarberiaApp() {
   const [view, setView] = useState("inicio"); // inicio | reservar | misCitas | contacto | galeria | admin
@@ -430,24 +401,31 @@ export default function FelixBarberiaApp() {
   // Sube cada vez que la sesión del panel deja de valer. Se usa como key del
   // panel, así que subirla lo vuelve a montar y el panel pide la clave otra vez.
   const [adminEpoch, setAdminEpoch] = useState(0);
-  const [services, setServicesState] = useState(DEFAULT_SERVICES);
-  const [barbers, setBarbersState] = useState(DEFAULT_BARBERS);
-  const [appointments, setAppointmentsState] = useState(initialAppointments);
-  const [blockedRanges, setBlockedRangesState] = useState(initialBlockedRanges);
-  const [blockedDays, setBlockedDaysState] = useState(initialBlockedDays);
-  const [festivos, setFestivosState] = useState(initialFestivos);
-  const [vacationRanges, setVacationRangesState] = useState(initialVacationRanges);
-  const [portfolio, setPortfolioState] = useState(DEFAULT_PORTFOLIO);
+  // Todo arranca vacío. Vacío aquí significa "todavía no se sabe", no "no hay":
+  // quien lo pinta tiene que mirar `loaded` antes de sacar conclusiones.
+  const [services, setServicesState] = useState([]);
+  const [barbers, setBarbersState] = useState([]);
+  const [appointments, setAppointmentsState] = useState([]);
+  const [blockedRanges, setBlockedRangesState] = useState([]);
+  const [blockedDays, setBlockedDaysState] = useState([]);
+  const [festivos, setFestivosState] = useState([]);
+  const [vacationRanges, setVacationRangesState] = useState([]);
+  const [portfolio, setPortfolioState] = useState([]);
   // La lista de espera y las citas con nombre y teléfono ya NO vienen en la
   // carga pública: las trae /api/admin-data cuando Félix entra en su panel.
   const [waitlist, setWaitlistState] = useState([]);
   const [adminAppointments, setAdminAppointments] = useState([]);
-  const [schedule, setScheduleState] = useState(DEFAULT_SCHEDULE);
+  const [schedule, setScheduleState] = useState(EMPTY_SCHEDULE);
   // Reservas temporales vivas: las horas que alguien está rellenando ahora
   // mismo. Se restan de la disponibilidad, igual que una cita.
   const [holds, setHoldsState] = useState([]);
 
   const [loadError, setLoadError] = useState(null);
+  // ¿Ha terminado ya la primera carga? Mientras sea false y no haya `loadError`,
+  // donde van los datos reales se pinta un hueco gris del mismo tamaño. Es lo
+  // único que distingue "aún no ha llegado" de "no hay nada": sin esto, la
+  // pantalla de reservar diría "no quedan huecos" con la agenda todavía vacía.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -465,6 +443,7 @@ export default function FelixBarberiaApp() {
         setScheduleState(d.schedule);
         setHoldsState(d.holds || []);
         setLoadError(null);
+        setLoaded(true);
       } catch (e) {
         if (!mounted) return;
         // Antes, un fallo aquí dejaba la web con los datos de ejemplo del
@@ -489,6 +468,14 @@ export default function FelixBarberiaApp() {
   // que la base de datos no aceptó.
   async function saveCollection(collection, next, apply, previous) {
     if (blockedByMaintenance()) return false;
+    // Cada guardado manda la colección ENTERA. Si la carga inicial todavía no
+    // ha terminado —o falló—, esa colección está vacía porque no ha llegado, y
+    // guardarla borraría del servidor lo que sí hay. Vacío nunca es una
+    // respuesta: se avisa y no se toca nada.
+    if (!loaded) {
+      if (typeof window !== "undefined") window.alert("Todavía se están cargando los datos. Espera un momento y vuelve a intentarlo.");
+      return false;
+    }
     apply(next);
     try {
       await apiSend("/api/admin", "POST", { collection, items: next }, { auth: true });
@@ -678,6 +665,13 @@ export default function FelixBarberiaApp() {
           .fade-in { animation: fadeIn 0.35s ease both; }
         }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
+        /* El hueco gris que ocupa el sitio de un dato que todavía no ha llegado.
+           Late despacio para que se lea como "cargando" y no como un fallo. */
+        .skeleton { background: rgba(255,255,255,0.09); }
+        @media (prefers-reduced-motion: no-preference) {
+          .skeleton { animation: skeletonPulse 1.4s ease-in-out infinite; }
+        }
+        @keyframes skeletonPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
         button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
       `}</style>
 
@@ -686,10 +680,18 @@ export default function FelixBarberiaApp() {
       <div className="wood-bg" style={{ paddingBottom: 78, minHeight: "100vh" }}>
         {MAINTENANCE_MODE && <MaintenanceBanner />}
         {loadError && <LoadErrorBanner message={loadError} />}
-        {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} onContacto={() => goTo("contacto")} />}
-        {view === "reservar" && (MAINTENANCE_MODE ? <MaintenanceCard /> : <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />)}
+        {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} onContacto={() => goTo("contacto")} loaded={loaded} loadFailed={!!loadError} />}
+        {/* La pantalla de reservar no se monta hasta que están los datos. No es
+            impaciencia: cuántos pasos tiene y qué barbero va marcado se deciden
+            al montarla, y con la lista de barberos aún vacía se decidirían mal
+            para el resto de la reserva. Hasta entonces, su hueco gris. */}
+        {view === "reservar" && (MAINTENANCE_MODE
+          ? <MaintenanceCard />
+          : loaded
+            ? <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />
+            : !loadError && <BookingSkeleton />)}
         {view === "misCitas" && <MisCitas {...shared} />}
-        {view === "contacto" && <Contacto schedule={schedule} />}
+        {view === "contacto" && <Contacto schedule={schedule} loaded={loaded} loadFailed={!!loadError} />}
         {view === "galeria" && <Galeria portfolio={portfolio} barbers={barbers} />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
@@ -799,7 +801,11 @@ function BottomNav({ view, onInicio, onMisCitas, onReservar, onContacto }) {
 
 /* ===================== INICIO ===================== */
 
-function Inicio({ services, onReservar, schedule, onContacto }) {
+function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed }) {
+  // Tres estados, no dos: cargando, cargado, y fallado. Con `loadFailed` no se
+  // pinta ni el dato ni el hueco — ya habla el aviso rojo de arriba, y un
+  // esqueleto girando para siempre debajo diría que aún hay esperanza.
+  const cargando = !loaded && !loadFailed;
   return (
     <div>
       <div style={{ position: "relative", padding: "78px 20px 40px", textAlign: "center", overflow: "hidden", minHeight: 420 }}>
@@ -819,6 +825,25 @@ function Inicio({ services, onReservar, schedule, onContacto }) {
       <div style={{ padding: "8px 20px 28px" }}>
         <h2 className="display" style={{ fontSize: 19, fontWeight: 700, marginBottom: 4 }}>Nuestros servicios</h2>
         <div style={{ width: 40, height: 2, background: GOLD, marginBottom: 16 }} />
+        {cargando ? (
+          <LoadingRegion label="Cargando los servicios" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            {/* Una tarjeta por servicio, con la misma foto, el mismo relleno y
+                las mismas dos líneas que la de verdad: al llegar los datos se
+                sustituye una por otra sin que la página dé un salto. */}
+            {/* Es un <button> como el de verdad, no un <div>: un botón trae su
+                propio relleno del navegador, y con un div la tarjeta mediría
+                unos píxeles menos y la página daría un salto al cambiarla. */}
+            {[0, 1, 2, 3].map((i) => (
+              <button key={i} disabled tabIndex={-1} className="card" style={{ textAlign: "left", borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <Skeleton width="100%" height={110} radius={0} style={{ display: "block" }} />
+                <div style={{ padding: 12, width: "100%" }}>
+                  <Skeleton width="72%" height={15} style={{ display: "block", marginBottom: 6 }} />
+                  <Skeleton width="52%" height={14} style={{ display: "block" }} />
+                </div>
+              </button>
+            ))}
+          </LoadingRegion>
+        ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
           {services.map((s) => (
             <button key={s.id} onClick={() => onReservar(s.id)} className="card fade-in" style={{ textAlign: "left", borderRadius: 14, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column" }}>
@@ -837,6 +862,7 @@ function Inicio({ services, onReservar, schedule, onContacto }) {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       <div style={{ padding: "8px 20px 18px" }}>
@@ -851,6 +877,20 @@ function Inicio({ services, onReservar, schedule, onContacto }) {
           {/* Las filas se reparten en dos columnas leyéndose hacia abajo, no
               hacia los lados: lunes, martes… en la primera, y el fin de semana
               en la segunda. */}
+          {/* Un horario vacío no es "cerrado toda la semana": es que aún no ha
+              llegado. Pintarlo diría a alguien que no venga un día que abre —
+              por eso la tabla sale solo con `loaded`, y si la carga falla no
+              sale nada aquí y habla el aviso rojo de arriba. */}
+          {cargando ? (
+            <LoadingRegion label="Cargando el horario" className="horario-tabla" style={{ border: "1px solid rgba(255,255,255,0.09)", borderRadius: 12, padding: "14px 16px", display: "grid", gap: "9px 18px", gridTemplateRows: "repeat(2, auto)" }}>
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, height: 16 }}>
+                  <Skeleton width={56} height={13} style={{ flexShrink: 0 }} />
+                  <Skeleton width={i === 2 ? 70 : 128} height={12} />
+                </div>
+              ))}
+            </LoadingRegion>
+          ) : loaded && (
           <div className="horario-tabla" style={{ border: "1px solid rgba(255,255,255,0.09)", borderRadius: 12, padding: "14px 16px", gridTemplateRows: `repeat(${Math.ceil(scheduleRows(schedule).length / 2)}, auto)` }}>
             {scheduleRows(schedule).map((r) => (
               <div key={r.dias} style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -859,6 +899,7 @@ function Inicio({ services, onReservar, schedule, onContacto }) {
               </div>
             ))}
           </div>
+          )}
         </button>
       </div>
 
@@ -892,7 +933,8 @@ function FeatureItem({ icon: Icon, title, detail }) {
 
 /* ===================== CONTACTO ===================== */
 
-function Contacto({ schedule }) {
+function Contacto({ schedule, loaded, loadFailed }) {
+  const cargando = !loaded && !loadFailed;
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "78px 20px 40px" }}>
       <h2 className="display" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Contacto</h2>
@@ -904,7 +946,11 @@ function Contacto({ schedule }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
           <Clock size={17} color={GOLD} />
-          <span style={{ fontSize: 13.5 }}>{formatScheduleSummary(schedule)}</span>
+          {/* Igual que en la portada: un horario que no ha llegado no se
+              resume como "Dom cerrado". O el hueco gris, o el de verdad. */}
+          {cargando
+            ? <LoadingRegion label="Cargando el horario" style={{ flex: 1 }}><Skeleton width="86%" height={14} style={{ display: "block" }} /></LoadingRegion>
+            : loaded && <span style={{ fontSize: 13.5 }}>{formatScheduleSummary(schedule)}</span>}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Phone size={17} color={GOLD} />
@@ -1048,6 +1094,49 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
 // El tope de personas por reserva. Aquí es comodidad: quien de verdad manda es
 // el servidor, que lo vuelve a comprobar aunque alguien se salte la web.
 const MAX_PERSONAS = 3;
+
+// Lo que se ve en la pantalla de reservar mientras llegan los datos. Repite la
+// maquetación del primer paso —cabecera, "¿cuántos venís?" y la lista de
+// servicios— con huecos grises en lugar de los datos, para que al montarse la
+// pantalla de verdad no se mueva nada. No trae ni un precio ni una hora: los
+// que había aquí antes eran inventados.
+function BookingSkeleton() {
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "78px 18px 40px" }}>
+      <div style={{ textAlign: "center" }} className="fade-in">
+        <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 110, height: "auto", objectFit: "contain", margin: "0 auto 10px", display: "block" }} />
+        <a href={MAPS_LINK} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: SMOKE, fontSize: 11.5, textDecoration: "none" }}>
+          <MapPin size={12} color={GOLD} /> {SHOP_ADDRESS}
+        </a>
+      </div>
+
+      <h2 className="display" style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px" }}>Reservar tu cita</h2>
+      <p style={{ color: SMOKE, fontSize: 13, marginBottom: 16 }}>Cargando los servicios y las horas libres…</p>
+
+      <LoadingRegion label="Cargando los servicios y las horas libres">
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 12.5, color: SMOKE, marginBottom: 8 }}>¿Cuántos venís?</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {Array.from({ length: MAX_PERSONAS }, (_, i) => i).map((i) => (
+              <Skeleton key={i} height={40} radius={10} style={{ flex: 1 }} />
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <button key={i} disabled tabIndex={-1} className="card" style={{ textAlign: "left", padding: 16, borderRadius: 14, display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ flex: 1 }}>
+                <Skeleton width="58%" height={18} style={{ display: "block" }} />
+                <Skeleton width="80%" height={15} style={{ display: "block" }} />
+              </div>
+              <Skeleton width={34} height={18} />
+            </button>
+          ))}
+        </div>
+      </LoadingRegion>
+    </div>
+  );
+}
 
 function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef, createHold, releaseHold, blockedRanges, blockedDays, festivos, vacationRanges, refreshAppointments, createAppointment, cancelAppointment, cancelAppointmentGroup, initialServiceId, joinWaitlist, schedule }) {
   const singleBarber = barbers.length === 1;
@@ -2071,9 +2160,23 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   const [showBlock, setShowBlock] = useState(false);
   const [showVacation, setShowVacation] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState(null);
+  // El panel pide sus citas por su cuenta, a /api/admin-data. Hasta que
+  // contesta, la agenda está vacía porque no ha llegado — no porque el día esté
+  // libre. Decirle a Félix "sin citas este día" mientras carga es enseñarle un
+  // día que no es el suyo.
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    if (authed) refreshAppointments();
+    if (!authed) return;
+    let vivo = true;
+    (async () => {
+      try {
+        await refreshAppointments();
+      } finally {
+        if (vivo) setDataLoaded(true);
+      }
+    })();
+    return () => { vivo = false; };
   }, [authed, tab]);
 
   function apptsForDate(d) {
@@ -2286,11 +2389,22 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -1))} onNext={() => setCursorDate(addDays(cursorDate, 1))} label={fmtLong(cursorDate)} />
               <div style={{ margin: "14px 0" }}>
-                {apptsForDate(cursorDate).length === 0 ? (
+                {!dataLoaded ? (
+                  <LoadingRegion label="Cargando las citas del día">
+                    <div className="card" style={{ borderRadius: 12, padding: 20, textAlign: "center" }}>
+                      <Skeleton width="46%" height={16} style={{ display: "block", margin: "0 auto" }} />
+                    </div>
+                  </LoadingRegion>
+                ) : apptsForDate(cursorDate).length === 0 ? (
                   <EmptyState text="Sin citas este día." />
                 ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
               </div>
-              <QuickActions onAdd={() => setShowAdd(true)} onBlock={() => setShowBlock(true)} onVacation={() => setShowVacation(true)} />
+              {/* Sin servicios no se puede apuntar una cita: la ventana arranca
+                  eligiendo el primero de la lista. Antes esa lista nunca estaba
+                  vacía porque el código traía tres servicios inventados; ahora
+                  puede estarlo mientras carga, y abrirla así rompería el panel
+                  entero. Se dice y no se abre. */}
+              <QuickActions onAdd={() => { if (services.length === 0) { window.alert("Todavía se están cargando los datos. Espera un momento y vuelve a intentarlo."); return; } setShowAdd(true); }} onBlock={() => setShowBlock(true)} onVacation={() => setShowVacation(true)} />
             </div>
           )}
 
@@ -2454,7 +2568,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       )}
 
       {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
-      {showAdd && <AddApptModal services={services} barbers={barbers} holds={holds} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
+      {showAdd && services.length > 0 && <AddApptModal services={services} barbers={barbers} holds={holds} onClose={() => setShowAdd(false)} onSave={addManualAppt} />}
       {showBlock && <BlockHourModal onClose={() => setShowBlock(false)} onSave={blockRange} />}
       {showVacation && <VacationModal onClose={() => setShowVacation(false)} onSave={addVacation} />}
     </div>
@@ -2752,6 +2866,34 @@ function ApptRow({ a, services, barbers, onClick, groupSize }) {
 
 function EmptyState({ text }) {
   return <div className="card" style={{ borderRadius: 12, padding: 20, textAlign: "center", color: SMOKE, fontSize: 13 }}>{text}</div>;
+}
+
+/* ===================== HUECOS DE CARGA ===================== */
+
+// Un rectángulo gris que ocupa el sitio de un dato que todavía no ha llegado.
+// Se le da el ancho y el alto de lo que va a sustituir, para que al llegar el
+// dato no se mueva nada de sitio: en un móvil, un salto de maquetación es un
+// dedo pulsando lo que no era.
+//
+// Lleva `aria-hidden` porque no dice nada: quien lo necesite oír lo oye del
+// `role="status"` que lo envuelve.
+function Skeleton({ width = "100%", height = 12, radius = 6, style }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="skeleton"
+      style={{ display: "inline-block", width, height, borderRadius: radius, ...style }}
+    />
+  );
+}
+
+// Envuelve un grupo de huecos y le pone nombre para quien no ve la pantalla.
+function LoadingRegion({ label, children, style, className }) {
+  return (
+    <div role="status" aria-live="polite" aria-label={label} className={className} style={style}>
+      {children}
+    </div>
+  );
 }
 
 function StatCard({ label, value }) {
