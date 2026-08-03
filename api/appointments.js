@@ -36,7 +36,10 @@ async function tellShop(supabase, appointments, kind, req) {
     const notice = kind === "cancelled"
       ? cancellationNotice(appointments, names)
       : bookingNotice(appointments, names);
-    await sendPush({ title: notice.subject, body: notice.body, url: "/" });
+    // La dirección la pone el propio aviso: lleva al panel, al día y la hora
+    // de esa cita. Ver `notify.js` — no lleva el id, y no lleva a nadie por
+    // nombre.
+    await sendPush({ title: notice.subject, body: notice.body, url: notice.url || "/" });
   } catch (e) {
     console.warn("[notify] aviso no enviado:", e.message);
   }
@@ -221,7 +224,7 @@ export default async function handler(req, res) {
       try {
         const { data, error } = await supabase
           .from("appointments")
-          .update({ status: "cancelled" })
+          .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
           .eq("group_id", groupId)
           .eq("status", "booked")
           .select();
@@ -244,8 +247,15 @@ export default async function handler(req, res) {
     const status = allowed.includes(body.status) ? body.status : "cancelled";
 
     try {
+      // La hora de la cancelación se apunta sólo al cancelar. Este mismo PATCH
+      // sirve para marcar "no se presentó" y para quitar la marca, y ahí no hay
+      // ninguna cancelación que fechar; y una cita que vuelve a "booked" tiene
+      // que perder la fecha, o arrastraría la de una cancelación deshecha.
+      const cambios = status === "cancelled"
+        ? { status, cancelled_at: new Date().toISOString() }
+        : { status, cancelled_at: null };
       const { data, error } = await supabase
-        .from("appointments").update({ status }).eq("id", id).select().single();
+        .from("appointments").update(cambios).eq("id", id).select().single();
       if (error || !data) {
         return res.status(404).json({ ok: false, reason: "not_found", message: "Esa cita ya no existe." });
       }

@@ -33,6 +33,10 @@ export function appointmentOut(r) {
     out.groupId = r.group_id;
     out.groupPosition = r.group_position;
   }
+  // Sólo cuando la columna dice algo. Las canceladas de antes de que existiera
+  // la columna se quedan sin fecha, y "sin fecha" tiene que poder distinguirse
+  // de una fecha inventada: la ficha dirá que está cancelada y callará cuándo.
+  if (r.cancelled_at != null) out.cancelledAt = r.cancelled_at;
   return out;
 }
 
