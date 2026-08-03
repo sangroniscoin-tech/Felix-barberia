@@ -2514,6 +2514,16 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   const weekIncome = useMemo(() => weekAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [weekAppts, services]);
   const monthIncome = useMemo(() => monthAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [monthAppts, services]);
 
+  // Lo que se habría cobrado de quienes no se presentaron. Es el complemento
+  // exacto de las dos cifras de arriba: cobrado más perdido es lo que la cifra
+  // de ingresos sumaba antes de dejar fuera a los ausentes.
+  //
+  // Sin esto, corregir los ingresos hacía desaparecer ese dinero de la
+  // pantalla sin dejar rastro: Félix dejaba de ver una cifra equivocada, pero
+  // tampoco llegaba a ver nunca lo que le cuestan las ausencias.
+  const weekLost = useMemo(() => weekAppts.reduce((sum, a) => sum + (a.noShow ? apptPrice(a) : 0), 0), [weekAppts, services]);
+  const monthLost = useMemo(() => monthAppts.reduce((sum, a) => sum + (a.noShow ? apptPrice(a) : 0), 0), [monthAppts, services]);
+
   const searchResults = search.length > 0
     ? appointments.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()) || a.phone.includes(search))
     : [];
@@ -2716,7 +2726,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -7))} onNext={() => setCursorDate(addDays(cursorDate, 7))} label={`Semana del ${weekDays[0].getDate()} ${MESES[weekDays[0].getMonth()]}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
                 <StatCard label="Citas de la semana" value={weekAppts.length} />
-                <StatCard label="Ingresos de la semana" value={`${weekIncome}€`} />
+                <StatCard label="Cobrado esta semana" value={`${weekIncome}€`} />
+                {/* Un cero se enseña, no se esconde: significa que esta semana
+                    vinieron todos, y un recuadro que aparece y desaparece
+                    movería de sitio el resto de la pantalla. */}
+                <StatCard label="Perdido por ausencias" value={`${weekLost}€`} tone="perdida" wide />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 {weekDays.map((d) => (
@@ -2747,8 +2761,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -30))} onNext={() => setCursorDate(addDays(cursorDate, 30))} label={`${MESES[cursorDate.getMonth()][0].toUpperCase() + MESES[cursorDate.getMonth()].slice(1)} ${cursorDate.getFullYear()}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 16, marginBottom: 10 }}>
-                <StatCard label="Ingresos del mes" value={`${monthIncome}€`} />
+                <StatCard label="Cobrado este mes" value={`${monthIncome}€`} />
                 <StatCard label="Citas del mes" value={stats.total} />
+                <StatCard label="Perdido por ausencias" value={`${monthLost}€`} tone="perdida" wide />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 20 }}>
                 <StatCard label="Clientes nuevos" value={stats.nuevos} />
@@ -3219,10 +3234,17 @@ function LoadingRegion({ label, children, style, className }) {
   );
 }
 
-function StatCard({ label, value }) {
+// `tone="perdida"` pinta la cifra en el rojo que el panel ya usa para el aviso
+// de "no se presentó", en vez del dorado. Es lo único que distingue de un
+// vistazo el dinero que se ha cobrado del que se ha dejado de cobrar, y las
+// dos cifras viven en la misma pantalla.
+//
+// `wide` la pone a lo ancho de la rejilla. La de ausencias es impar en las dos
+// pantallas, y media fila vacía a su lado se lee como algo que falta.
+function StatCard({ label, value, tone, wide }) {
   return (
-    <div className="card" style={{ borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
-      <div className="display" style={{ fontSize: 24, color: GOLD, fontWeight: 700 }}>{value}</div>
+    <div className="card" style={{ borderRadius: 12, padding: "14px 10px", textAlign: "center", ...(wide ? { gridColumn: "1 / -1" } : null) }}>
+      <div className="display" style={{ fontSize: 24, color: tone === "perdida" ? "#e0a0a0" : GOLD, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 2 }}>{label}</div>
     </div>
   );
