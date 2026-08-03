@@ -94,6 +94,35 @@ function formatScheduleSummary(schedule) {
   return parts.join(" · ") || "Consulta horarios";
 }
 
+// Los mismos grupos que formatScheduleSummary —"Mar–Mié" cuando dos días
+// seguidos abren igual— pero devueltos en piezas en vez de en una frase, para
+// poder maquetarlos como una tabla. La frase seguida cabía en una línea de
+// letra diminuta y no había quien la leyera en un móvil.
+//
+// Aquí salen los siete días, incluidos los cerrados: en una tabla, un día que
+// falta se lee como un descuido. La semana empieza en lunes y el domingo va
+// al final, que es como la lee cualquiera aquí.
+function scheduleRows(schedule) {
+  const orden = [1, 2, 3, 4, 5, 6, 0];
+  const groups = [];
+  for (const d of orden) {
+    const blocks = schedule[d] || [];
+    const hours = blocks.length === 0 ? null : blocks.map(([s, e]) => `${s}–${e}`).join(" y ");
+    const last = groups[groups.length - 1];
+    // Se agrupa con el anterior solo si abre igual Y es el día siguiente. El
+    // domingo nunca se pega al sábado aunque coincidan: rompería la lectura.
+    if (last && last.hours === hours && last.endDay === d - 1) {
+      last.endDay = d;
+    } else {
+      groups.push({ startDay: d, endDay: d, hours });
+    }
+  }
+  return groups.map((g) => ({
+    dias: g.startDay === g.endDay ? DIAS_CORTOS[g.startDay] : `${DIAS_CORTOS[g.startDay]}–${DIAS_CORTOS[g.endDay]}`,
+    horas: g.hours,
+  }));
+}
+
 const DIAS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
@@ -621,6 +650,12 @@ export default function FelixBarberiaApp() {
         .ghost-btn { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: ${BONE}; }
         .ghost-btn:hover { border-color: ${GOLD}; background: rgba(201,162,39,0.08); }
         .card { background: #161513; border: 1px solid rgba(255,255,255,0.14); }
+        button.card { font-family: inherit; color: inherit; }
+        /* El horario, en dos columnas cuando hay sitio y en una cuando no.
+           "09:30–13:30 y 16:30–20:00" no cabe a media pantalla en un móvil
+           estrecho, y partido en dos líneas se lee peor que en columna. */
+        .horario-tabla { display: grid; grid-auto-flow: row; gap: 9px 18px; }
+        @media (min-width: 400px) { .horario-tabla { grid-auto-flow: column; grid-auto-columns: 1fr; } }
         input, select { font-family: 'Inter', sans-serif; }
         ::selection { background: rgba(201,162,39,0.35); }
         @media (prefers-reduced-motion: no-preference) {
@@ -635,7 +670,7 @@ export default function FelixBarberiaApp() {
       <div className="wood-bg" style={{ paddingBottom: 78, minHeight: "100vh" }}>
         {MAINTENANCE_MODE && <MaintenanceBanner />}
         {loadError && <LoadErrorBanner message={loadError} />}
-        {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} />}
+        {view === "inicio" && <Inicio services={services} onReservar={goReservar} schedule={schedule} onContacto={() => goTo("contacto")} />}
         {view === "reservar" && (MAINTENANCE_MODE ? <MaintenanceCard /> : <ClientBooking key={bookingKey} {...shared} initialServiceId={initialServiceId} />)}
         {view === "misCitas" && <MisCitas {...shared} />}
         {view === "contacto" && <Contacto schedule={schedule} />}
@@ -748,8 +783,7 @@ function BottomNav({ view, onInicio, onMisCitas, onReservar, onContacto }) {
 
 /* ===================== INICIO ===================== */
 
-function Inicio({ services, onReservar, schedule }) {
-  const scheduleSummary = formatScheduleSummary(schedule);
+function Inicio({ services, onReservar, schedule, onContacto }) {
   return (
     <div>
       <div style={{ position: "relative", padding: "78px 20px 40px", textAlign: "center", overflow: "hidden", minHeight: 420 }}>
@@ -789,24 +823,38 @@ function Inicio({ services, onReservar, schedule }) {
         </div>
       </div>
 
-      <div style={{ padding: "8px 20px 28px", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 18 }}>
-        <FeatureItem icon={Clock} title="Horarios" detail={scheduleSummary} />
+      <div style={{ padding: "8px 20px 18px" }}>
+        <button onClick={onContacto} className="card" style={{ width: "100%", textAlign: "left", borderRadius: 16, padding: 16, cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${GOLD}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Clock size={16} color={GOLD} />
+            </div>
+            <div style={{ flex: 1, fontWeight: 700, fontSize: 15, color: BONE }}>Horarios</div>
+            <ChevronRight size={18} color={GOLD} />
+          </div>
+          {/* Las filas se reparten en dos columnas leyéndose hacia abajo, no
+              hacia los lados: lunes, martes… en la primera, y el fin de semana
+              en la segunda. */}
+          <div className="horario-tabla" style={{ border: "1px solid rgba(255,255,255,0.09)", borderRadius: 12, padding: "14px 16px", gridTemplateRows: `repeat(${Math.ceil(scheduleRows(schedule).length / 2)}, auto)` }}>
+            {scheduleRows(schedule).map((r) => (
+              <div key={r.dias} style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: BONE, flexShrink: 0, minWidth: 56 }}>{r.dias}</span>
+                <span style={{ fontSize: 12.5, color: r.horas ? SMOKE : "#6f6f6f" }}>{r.horas || "Cerrado"}</span>
+              </div>
+            ))}
+          </div>
+        </button>
+      </div>
+
+      <div style={{ padding: "0 20px 28px", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
         <FeatureItem icon={Bell} title="Recordatorios" detail="Te enviamos un aviso antes de tu cita." />
         <FeatureItem icon={XCircle} title="Cancelaciones" detail="Puedes cancelar hasta 3 horas antes." />
         <FeatureItem icon={ShieldCheck} title="Seguro y fácil" detail="Tus datos están protegidos." />
+        <FeatureItem icon={MessageCircle} title="¿Dudas o prefieres reservar por WhatsApp?" detail="Escríbenos y te ayudamos." />
       </div>
 
       <div style={{ padding: "0 20px 28px" }}>
-        <div className="card" style={{ borderRadius: 16, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(201,162,39,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <MessageCircle size={19} color={GOLD} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 13.5 }}>¿Dudas o prefieres reservar por WhatsApp?</div>
-            <div style={{ color: SMOKE, fontSize: 12 }}>Escríbenos y te ayudamos.</div>
-          </div>
-        </div>
-        <a href={`https://wa.me/${BARBER_WHATSAPP}`} target="_blank" rel="noopener noreferrer" className="ghost-btn" style={{ display: "block", textAlign: "center", marginTop: 10, padding: 12, borderRadius: 12, fontWeight: 700, fontSize: 12.5, textDecoration: "none", color: GOLD }}>
+        <a href={`https://wa.me/${BARBER_WHATSAPP}`} target="_blank" rel="noopener noreferrer" className="ghost-btn" style={{ display: "block", textAlign: "center", padding: 12, borderRadius: 12, fontWeight: 700, fontSize: 12.5, textDecoration: "none", color: GOLD }}>
           ESCRIBIR POR WHATSAPP
         </a>
       </div>
@@ -816,12 +864,12 @@ function Inicio({ services, onReservar, schedule }) {
 
 function FeatureItem({ icon: Icon, title, detail }) {
   return (
-    <div style={{ textAlign: "center" }}>
-      <div style={{ width: 40, height: 40, borderRadius: "50%", border: `1px solid ${GOLD}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px" }}>
-        <Icon size={17} color={GOLD} />
+    <div className="card" style={{ borderRadius: 14, padding: 14, display: "flex", gap: 11 }}>
+      <Icon size={19} color={GOLD} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 3, lineHeight: 1.3 }}>{title}</div>
+        <div style={{ color: SMOKE, fontSize: 11, lineHeight: 1.4 }}>{detail}</div>
       </div>
-      <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 3 }}>{title}</div>
-      <div style={{ color: SMOKE, fontSize: 11, lineHeight: 1.4 }}>{detail}</div>
     </div>
   );
 }
