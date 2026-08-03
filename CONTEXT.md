@@ -16,7 +16,7 @@ acceptance criteria on every change from here on:
   is broken.
 
 The first one used to bind hardest: two people booking at once lost one of the bookings.
-Postgres now refuses overlapping appointments outright. Read `ADR.md` before writing.
+Postgres now refuses overlapping appointments outright.
 
 ## What this is
 
@@ -36,6 +36,11 @@ Postgres now refuses overlapping appointments outright. Read `ADR.md` before wri
 - Félix uses the same site's admin panel to see the day, add bookings by hand, block time
   off, set holidays and holidays-of-obligation, manage the waiting list and the photo
   gallery, and change opening hours.
+- **He marks who didn't turn up**, from the day's list once their hour has passed, or from
+  the appointment itself. Only the exceptions get marked — nobody confirms attendance one
+  by one. That mark is what makes the takings real: an absence is worth €0 and shows up
+  beside them as "perdido por ausencias", which is the only place he sees what the
+  no-shows cost him.
 - Everything is in Spanish, for customers in Zaragoza. It is installable as a phone app
   (PWA) and is used mostly on phones.
 - Services and prices live in the data store, not the code, and Félix can change them

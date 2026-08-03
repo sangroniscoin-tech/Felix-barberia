@@ -151,13 +151,16 @@ cannot write them.
 | --- | --- |
 | `SUPABASE_URL` | `https://ozosjyulagynyxhnvyxr.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API Keys → `service_role` |
+| `ADMIN_PASSWORD` | chosen by the client; the admin panel's key |
 
-They are read **only** by `api/_lib/supabase.js`, which runs on the server. Never add a
-credential to `src/` — a Vite SPA ships everything it reads to the browser.
+The first two are read **only** by `api/_lib/supabase.js` and the third **only** by
+`api/_lib/adminAuth.js`, both of which run on the server. Never add a credential to `src/`
+— a Vite SPA ships everything it reads to the browser.
 
 Still public constants at the top of `src/App.jsx`, because they always were: the WhatsApp
-number, the shop address, the Apps Script URL for email, and **the admin password** — which
-means the admin panel is not actually protected. See `ADR.md`.
+number, the shop address, the Apps Script URL for email, and the responsible-party block
+the privacy notice is legally obliged to publish. **The admin password is not among them**
+— it moved to Vercel and is checked server-side in `api/_lib/adminAuth.js`. See `ADR.md`.
 
 ## What the connectors can't do
 
@@ -180,7 +183,7 @@ deployment unreachable — `curl` to the site still works for checking state.
 | --- | --- | --- |
 | Supabase (Postgres) | `api/` on the server, and `mcp__Supabase__*` | nothing |
 | Google Apps Script | `fetch` from the browser, **email notices only** | editing and redeploying it |
-| Gmail (booking + cancellation notices) | `MailApp` inside that same Apps Script | the barber's notification address is `BARBER_EMAIL` in `src/App.jsx`; it is set, so bookings and cancellations mail the customer's name and phone to the shop |
+| Gmail (booking + cancellation notices) | `MailApp` inside that same Apps Script — **but nothing arrives**: the script answers `{"ok":true}` to every action and never implemented `notify` (#40) | editing and redeploying that script; the address is `BARBER_EMAIL` in `src/App.jsx` |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
 | Unsplash | four hotlinked photos | none — if Unsplash changes them, the gallery changes |
