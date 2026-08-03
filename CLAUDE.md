@@ -180,7 +180,7 @@ deployment unreachable — `curl` to the site still works for checking state.
 | --- | --- | --- |
 | Supabase (Postgres) | `api/` on the server, and `mcp__Supabase__*` | nothing |
 | Google Apps Script | `fetch` from the browser, **email notices only** | editing and redeploying it |
-| Gmail (cancellation notices) | `MailApp` inside that same Apps Script | the barber's notification address is `BARBER_EMAIL` in `src/App.jsx`, and is **empty**, so barber-side notices do not send |
+| Gmail (booking + cancellation notices) | `MailApp` inside that same Apps Script | the barber's notification address is `BARBER_EMAIL` in `src/App.jsx`; it is set, so bookings and cancellations mail the customer's name and phone to the shop |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
 | Unsplash | four hotlinked photos | none — if Unsplash changes them, the gallery changes |

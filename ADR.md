@@ -69,8 +69,11 @@ endorsement.
   That page also promises the data is deleted a year after the appointment, and **nothing
   deletes it**: Félix does it by hand from his panel. Automating it or rewording the
   promise are the only two honest options; letting it drift is not one.
-- `BARBER_EMAIL` is empty, so the barber-side cancellation notice never sends. The code
-  path exists and looks like it works.
+- `BARBER_EMAIL` carries the shop's address, so **every booking and every cancellation
+  sends the customer's name and phone to a Gmail inbox** — a route out of the database
+  that the privacy notice has to keep describing. Turning it on or off is that one
+  constant; changing what leaves with it is a change to a published legal document too.
+  It is a business address, public like the responsible-party block, not a credential.
 
 **Getting to production**
 
