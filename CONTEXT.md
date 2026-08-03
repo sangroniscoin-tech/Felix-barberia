@@ -20,7 +20,9 @@ acceptance criteria on every change from here on:
 - A booking app for **Félix Barbería**, a one-chair barbershop at Calle Cereros 22,
   50003 Zaragoza, Spain. One barber, "Félix".
 - Customers pick a service, a day and a time, and leave a name and a phone number. They
-  can look their own bookings up again and cancel them.
+  can look their own bookings up again and cancel them. **They can book up to a month
+  ahead** — Félix asked for it: people with a wedding want the hour set weeks out. His own
+  panel has no such limit.
 - **A booking can be for up to 3 people** — a father and his son. Each picks their own
   service and gives their own name; one phone for the lot. They are seen back to back, so
   only times where the whole group fits are offered, and the whole reservation can be

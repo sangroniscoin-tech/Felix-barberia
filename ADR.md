@@ -57,11 +57,16 @@ endorsement.
   15 €/10 €/22 € for half a second before the real prices arrived.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
-- **Nothing calls Google any more.** The email notice never worked — the Apps Script's
-  `doPost` answered `{"ok":true}` to every action and never implemented `notify` (#40) —
-  and waiting on it cost up to 10 s per booking, so the call was removed (#53). The script
-  is still deployed and no agent can reach it; leave it closed and quiet. Félix is told by
-  Web Push, which is a browser standard with no account and no dashboard behind it.
+- **Nothing calls Google any more.** The email notice never worked and cost up to 10 s per
+  booking, so the call went (#40, #53). The script is still deployed and unreachable by any
+  agent; leave it closed and quiet. Web Push tells Félix now.
+- **How far ahead you can book is one number, `DIAS_MAX_RESERVA` in `shared/`, read by both
+  doors.** The day selector in `src/App.jsx` and the validation in `api/appointments.js`
+  import the same constant. A copy on each side is exactly what let the page offer 14 days
+  while the server accepted 2029 — and the past, too. "Today" is computed in
+  `Europe/Madrid`, not the server's UTC, or between midnight and 02:00 the window's last
+  day falls short. A valid admin pass skips the check at both ends, like the group size:
+  the pass moves a number, never skips a check.
 - The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
   It was found **in the trash** during the migration; restoring it is the only reason the
   data survived. Never write to it, never delete it, never let it be trashed again.
