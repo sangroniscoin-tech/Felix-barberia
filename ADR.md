@@ -58,7 +58,13 @@ endorsement.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
 - Apps Script survives **only** to send the email notice, and no agent can reach it: any
-  change there is a click-by-click procedure for the client.
+  change there is a click-by-click procedure for the client. **It does not actually send
+  anything.** Its `doPost` answers `{"ok":true}` to every action, including invented ones,
+  so `notify` was never implemented — and `sendNotification` swallows errors on purpose, so
+  both sides hid the failure. Never read an `ok` from that endpoint as proof of anything
+  (#40). If it is ever fixed, the destination must be **fixed inside the script**: the
+  script URL ships in the browser bundle and the `to` travels in the request, so honouring
+  it turns Félix's Gmail into an open relay.
 - The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
   It was found **in the trash** during the migration; restoring it is the only reason the
   data survived. Never write to it, never delete it, never let it be trashed again.
@@ -69,11 +75,19 @@ endorsement.
   That page also promises the data is deleted a year after the appointment, and **nothing
   deletes it**: Félix does it by hand from his panel. Automating it or rewording the
   promise are the only two honest options; letting it drift is not one.
-- `BARBER_EMAIL` carries the shop's address, so **every booking and every cancellation
-  sends the customer's name and phone to a Gmail inbox** — a route out of the database
-  that the privacy notice has to keep describing. Turning it on or off is that one
-  constant; changing what leaves with it is a change to a published legal document too.
-  It is a business address, public like the responsible-party block, not a credential.
+- `BARBER_EMAIL` carries the shop's address, so every booking and cancellation **tries** to
+  send the customer's name and phone to a Gmail inbox — a route out of the database the
+  privacy notice describes. Nothing arrives today (entry above), but the notice is written
+  for the intended behaviour and stays correct the day it works; don't "fix" it by deleting
+  the clause. It is a business address, public like the responsible-party block, not a
+  credential.
+- **Money counts what was collected, not what was booked.** A `no_show` appointment is
+  worth zero in every money figure; the appointment *counts* still include it, because the
+  slot was occupied and could not be resold. The default is "came" — nothing is confirmed
+  one by one, so an unmarked day reads almost right instead of reading €0. Any new money
+  figure must exclude `noShow` explicitly: the per-appointment price helper deliberately
+  does **not** know about it, because the losses figure needs to price exactly the ones
+  that were not collected.
 
 **Getting to production**
 
