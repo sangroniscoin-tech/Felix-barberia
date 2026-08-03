@@ -21,10 +21,14 @@ endorsement.
   before the body is parsed. The signing key is derived from the password itself, so there
   is no second secret to configure and rotating the password invalidates every open
   session. A missing variable **fails closed** — never open-by-default on half a config.
-- **Customer names and phones are still served to anyone**: `/api/bootstrap` returns whole
-  appointment rows, unauthenticated, because the browser filters "Mis citas" client-side.
-  Verified against production on 2026-08-02. This is the next issue; the entry above is
-  its prerequisite, since the panel needs a closed door to be served those rows from.
+- **Nothing public carries a person.** `/api/bootstrap` returns busy blocks — day, time,
+  duration, barber — and **no id**, because `PATCH /api/appointments` cancels on the id
+  alone: a public id is a cancellable booking. Identity is served by exactly two routes,
+  `/api/my-appointments` (exact full phone, never a partial match) and `/api/admin-data`
+  (the panel's key). Never widen the public payload to "just add the name".
+- Writes that a **customer** performs need a public route of their own that does one
+  thing. `/api/waitlist` only inserts. Routing a customer action through `/api/admin` is
+  what broke joining the waiting list the moment that endpoint grew a lock.
 - Two appointments for one barber cannot overlap: a Postgres exclusion constraint
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
