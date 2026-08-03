@@ -2795,6 +2795,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
 
           {tab === "ajustes" && (
             <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <AvisosCard />
               <ScheduleEditor schedule={schedule} setSchedule={setSchedule} />
               {waitlist.length > 0 && (
                 <div className="card" style={{ borderRadius: 12, padding: 14 }}>
@@ -3301,6 +3302,153 @@ function StatCard({ label, value, tone, wide }) {
     <div className="card" style={{ borderRadius: 12, padding: "14px 10px", textAlign: "center", ...(wide ? { gridColumn: "1 / -1" } : null) }}>
       <div className="display" style={{ fontSize: 24, color: tone === "perdida" ? "#e0a0a0" : GOLD, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// Los avisos al móvil de Félix: activarlos, ver si están puestos, y probarlos.
+//
+// Todo el estado vive en el navegador que está mirando, no en la cuenta: cada
+// móvil se activa por separado, y por eso lo primero que se hace es preguntarle
+// al propio navegador si ya está suscrito.
+function AvisosCard() {
+  const soportado = typeof window !== "undefined"
+    && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+  const [estado, setEstado] = useState("comprobando"); // comprobando | activo | inactivo | bloqueado
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState(null);
+
+  useEffect(() => {
+    if (!soportado) { setEstado("inactivo"); return; }
+    let vivo = true;
+    (async () => {
+      try {
+        if (Notification.permission === "denied") { if (vivo) setEstado("bloqueado"); return; }
+        const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+        const sub = reg ? await reg.pushManager.getSubscription() : null;
+        if (vivo) setEstado(sub ? "activo" : "inactivo");
+      } catch {
+        if (vivo) setEstado("inactivo");
+      }
+    })();
+    return () => { vivo = false; };
+  }, [soportado]);
+
+  // La clave pública viaja en base64url y el navegador la quiere en bytes.
+  function urlB64ToUint8Array(base64) {
+    const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(b64);
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  }
+
+  async function activar() {
+    setOcupado(true); setAviso(null);
+    try {
+      const permiso = await Notification.requestPermission();
+      if (permiso !== "granted") {
+        setEstado(permiso === "denied" ? "bloqueado" : "inactivo");
+        return;
+      }
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      const { publicKey } = await apiGet("/api/push", { auth: true });
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(publicKey),
+      });
+      await apiSend("/api/push", "POST", { subscription: sub.toJSON(), userAgent: navigator.userAgent }, { auth: true });
+      setEstado("activo");
+      setAviso("Listo. Te avisaré en este móvil.");
+    } catch (e) {
+      setAviso(`No se ha podido activar: ${e.message}`);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function desactivar() {
+    setOcupado(true); setAviso(null);
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (sub) {
+        await apiSend("/api/push", "DELETE", { endpoint: sub.endpoint }, { auth: true });
+        await sub.unsubscribe();
+      }
+      setEstado("inactivo");
+    } catch (e) {
+      setAviso(`No se ha podido desactivar: ${e.message}`);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function probar() {
+    setOcupado(true); setAviso(null);
+    try {
+      const body = await apiSend("/api/push", "POST", { test: true }, { auth: true });
+      setAviso(body.sent > 0 ? "Enviado. Debería sonarte ahora." : "No hay ningún móvil activado.");
+    } catch (e) {
+      setAviso(`No se ha podido enviar: ${e.message}`);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ borderRadius: 12, padding: 14 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+        <Bell size={14} /> Avisos en este móvil
+      </div>
+
+      {!soportado ? (
+        <p style={{ fontSize: 12, color: SMOKE, margin: 0 }}>
+          Este navegador no puede recibir avisos. Prueba con Chrome en el móvil.
+        </p>
+      ) : estado === "bloqueado" ? (
+        <p style={{ fontSize: 12, color: "#e0a0a0", margin: 0 }}>
+          Bloqueaste los avisos en este navegador, y ya no te los volverá a pedir solo. Para
+          reactivarlos: toca el candado 🔒 al lado de la dirección web, entra en Permisos y
+          pon Notificaciones en «Permitir». Luego vuelve aquí.
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, color: SMOKE, margin: "0 0 10px" }}>
+            {estado === "activo"
+              ? "Activados. Te suena el móvil cuando un cliente reserva o cancela por la web."
+              : "Actívalos y te sonará el móvil cuando un cliente reserve o cancele, sin tener que mirar el panel."}
+          </p>
+          <p style={{ fontSize: 11, color: SMOKE, margin: "0 0 10px" }}>
+            El aviso lleva el día, la hora y el servicio. El nombre y el teléfono no salen ahí:
+            se ven aquí dentro, que es lo que pide tu clave.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {estado === "activo" ? (
+              <>
+                <button onClick={probar} disabled={ocupado} className="ghost-btn" style={{ flex: 1, padding: 10, borderRadius: 10, fontSize: 12.5, cursor: ocupado ? "not-allowed" : "pointer" }}>
+                  Probar
+                </button>
+                <button onClick={desactivar} disabled={ocupado} className="ghost-btn" style={{ flex: 1, padding: 10, borderRadius: 10, fontSize: 12.5, cursor: ocupado ? "not-allowed" : "pointer" }}>
+                  Desactivar
+                </button>
+              </>
+            ) : (
+              <button onClick={activar} disabled={ocupado || estado === "comprobando"} className="gold-btn" style={{ width: "100%", padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: ocupado ? "not-allowed" : "pointer" }}>
+                {ocupado ? "Activando…" : "Activar avisos"}
+              </button>
+            )}
+          </div>
+          {aviso && <p style={{ fontSize: 11.5, color: SMOKE, margin: "10px 0 0" }}>{aviso}</p>}
+          {estado === "activo" && (
+            <p style={{ fontSize: 10.5, color: SMOKE, margin: "8px 0 0" }}>
+              Si cambias de móvil o borras los datos del navegador, hay que volver a darle a
+              Activar. No es una avería.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
