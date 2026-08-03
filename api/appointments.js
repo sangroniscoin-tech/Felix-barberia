@@ -11,6 +11,7 @@ import {
 import { conflictingHold } from "./_lib/holds.js";
 import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
+import { motivoFueraDePlazo } from "../shared/plazo-reserva.js";
 import { bookingNotice, cancellationNotice } from "./_lib/notify.js";
 import { sendPush } from "./_lib/push.js";
 
@@ -100,6 +101,21 @@ export default async function handler(req, res) {
     if (!isValidEmail(email)) return bad(res, "Ese correo no parece válido.", "email");
     if (!isValidDateKey(dateKey)) return bad(res, "Falta el día de la cita.", "dateKey");
     if (!isValidTime(time)) return bad(res, "Falta la hora de la cita.", "time");
+
+    // El plazo, antes de tocar la base de datos. La página solo ofrece los días
+    // que caben, pero eso es comodidad: cualquiera puede llamar a esta ruta a
+    // mano, y así es como se podía guardar una cita para 2029 o para el año
+    // pasado.
+    //
+    // Con un pase de administrador válido no se aplica, exactamente igual que
+    // el tope de personas: Félix apunta desde su panel lo que le piden por
+    // teléfono para dentro de tres meses, y también lo que se le olvidó anotar
+    // la semana pasada. Un pase ausente, caducado o inventado cae al límite
+    // público — el pase mueve un número y no salta ninguna comprobación.
+    if (requireAdmin(req) !== null) {
+      const fueraDePlazo = motivoFueraDePlazo(dateKey);
+      if (fueraDePlazo) return bad(res, fueraDePlazo, "dateKey");
+    }
 
     try {
       // La duración y el precio se toman de los servicios en el servidor, no de
