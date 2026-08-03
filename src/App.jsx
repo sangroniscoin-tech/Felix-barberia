@@ -2501,8 +2501,18 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     return appointments.filter((a) => keys.includes(a.dateKey));
   }, [appointments, weekDays]);
 
-  const weekIncome = useMemo(() => weekAppts.reduce((sum, a) => sum + apptPrice(a), 0), [weekAppts, services]);
-  const monthIncome = useMemo(() => monthAppts.reduce((sum, a) => sum + apptPrice(a), 0), [monthAppts, services]);
+  // Dinero cobrado: quien no se presentó no paga, así que no suma. `apptPrice`
+  // se queda valorando la cita igual —lo que cambia es quién entra en la suma,
+  // no cuánto vale— porque lo perdido por ausencias se calcula con la misma
+  // función y necesita poder valorar precisamente las que no se cobraron.
+  //
+  // Las canceladas no aparecen por aquí: `admin-data` no se las sirve al panel.
+  //
+  // El recuento de citas sí las cuenta, a propósito: el hueco lo ocuparon
+  // igual y no se le pudo dar a otro. La diferencia entre lo reservado y lo
+  // cobrado es justo lo que Félix quiere ver.
+  const weekIncome = useMemo(() => weekAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [weekAppts, services]);
+  const monthIncome = useMemo(() => monthAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [monthAppts, services]);
 
   const searchResults = search.length > 0
     ? appointments.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()) || a.phone.includes(search))
@@ -2714,9 +2724,17 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                     <div style={{ fontSize: 12, fontWeight: 700, color: GOLD, marginBottom: 6 }}>{DIAS[d.getDay()]} {d.getDate()}</div>
                     {apptsForDate(d).length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Sin citas</span> :
                       apptsForDate(d).map((a) => (
-                        <div key={a.id} onClick={() => setSelectedAppt(a)} style={{ fontSize: 12.5, padding: "4px 0", cursor: "pointer", display: "flex", justifyContent: "space-between" }}>
+                        // El precio de un ausente va tachado y la línea atenuada:
+                        // sin eso, las líneas de abajo no suman el total del
+                        // recuadro de arriba y parece que la cifra está rota.
+                        // Mismo lenguaje que la lista del día, que ya atenúa al
+                        // ausente y le pone "· no se presentó".
+                        <div key={a.id} onClick={() => setSelectedAppt(a)} style={{ fontSize: 12.5, padding: "4px 0", cursor: "pointer", display: "flex", justifyContent: "space-between", opacity: a.noShow ? 0.55 : 1 }}>
                           <span>{a.time} · {a.name}{barbers.length > 1 ? ` (${barbers.find((b) => b.id === a.barberId)?.name || ""})` : ""}<GroupTag a={a} groupSize={groupSizes[a.groupId]} /></span>
-                          <span style={{ color: SMOKE }}>{services.find((s) => s.id === a.service)?.name} · {apptPrice(a)}€</span>
+                          <span style={{ color: SMOKE }}>
+                            {services.find((s) => s.id === a.service)?.name} ·{" "}
+                            <span style={a.noShow ? { textDecoration: "line-through" } : undefined}>{apptPrice(a)}€</span>
+                          </span>
                         </div>
                       ))}
                   </div>
