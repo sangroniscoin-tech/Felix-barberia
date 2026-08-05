@@ -3922,6 +3922,52 @@ function AddApptModal({ services, barbers, holds, appointments, blockedRanges, b
   );
 }
 
+// Bloquear un rato del día: el médico, un recado, lo que sea. El servidor tira
+// los rangos con la hora final por debajo de la inicial (api/admin.js), así que
+// aquí no se deja guardar uno: si no, el bloqueo aparecería en la lista y se
+// esfumaría al recargar, sin decir por qué.
+function BlockHourModal({ onClose, onSave }) {
+  const [date, setDate] = useState(dateKey(new Date()));
+  const [start, setStart] = useState("11:00");
+  const [end, setEnd] = useState("12:30");
+  const [label, setLabel] = useState("");
+  const valido = !!date && !!start && !!end && start < end;
+  return (
+    <ModalShell title="Bloquear horas" onClose={onClose}>
+      <FormField label="Fecha"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} /></FormField>
+      <FormField label="Desde"><input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} /></FormField>
+      <FormField label="Hasta"><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inputStyle} /></FormField>
+      <FormField label="Motivo (opcional)"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Médico, personal…" style={inputStyle} /></FormField>
+      {!valido && (
+        <div className="card" style={{ padding: 10, borderRadius: 10, fontSize: 12.5, color: SMOKE, marginBottom: 10 }}>
+          La hora de "hasta" tiene que ser posterior a la de "desde".
+        </div>
+      )}
+      <button disabled={!valido} onClick={() => onSave({ dateKey: date, start, end, label })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: valido ? 1 : 0.5 }}>Bloquear</button>
+    </ModalShell>
+  );
+}
+
+// Vacaciones: días enteros. Aquí un solo día vale —empieza y acaba el mismo—,
+// que es lo que el servidor admite para este caso.
+function VacationModal({ onClose, onSave }) {
+  const [start, setStart] = useState(dateKey(new Date()));
+  const [end, setEnd] = useState(dateKey(addDays(new Date(), 5)));
+  const valido = !!start && !!end && start <= end;
+  return (
+    <ModalShell title="Bloquear vacaciones" onClose={onClose}>
+      <FormField label="Desde"><input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} /></FormField>
+      <FormField label="Hasta"><input type="date" value={end} onChange={(e) => setEnd(e.target.value)} style={inputStyle} /></FormField>
+      {!valido && (
+        <div className="card" style={{ padding: 10, borderRadius: 10, fontSize: 12.5, color: SMOKE, marginBottom: 10 }}>
+          El día de "hasta" no puede ser anterior al de "desde".
+        </div>
+      )}
+      <button disabled={!valido} onClick={() => onSave({ start, end })} className="gold-btn" style={{ width: "100%", padding: 13, borderRadius: 10, fontWeight: 700, fontSize: 13, marginTop: 8, cursor: "pointer", opacity: valido ? 1 : 0.5 }}>Bloquear días</button>
+    </ModalShell>
+  );
+}
+
 function FormField({ label, children }) {
   return (
     <label style={{ display: "block", fontSize: 11.5, color: SMOKE, marginBottom: 10 }}>
