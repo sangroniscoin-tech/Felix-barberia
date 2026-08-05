@@ -13,6 +13,7 @@
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { cleanName, cleanPhone, isValidPhone } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
+import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -22,7 +23,10 @@ export default async function handler(req, res) {
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const { collection, items } = body;
-  if (!Array.isArray(items) && typeof items !== "object") {
+  // "lastBackup" no manda ninguna lista: no es una colección que se reemplace,
+  // es una marca de tiempo, y la pone el servidor. Todo lo demás sí llega con
+  // su lista entera y sin ella no hay nada que guardar.
+  if (collection !== "lastBackup" && !Array.isArray(items) && typeof items !== "object") {
     return res.status(400).json({ ok: false, reason: "invalid_input", message: "Falta la lista." });
   }
 
@@ -112,6 +116,22 @@ export default async function handler(req, res) {
           }))
           .filter((w) => w.customer_name && isValidPhone(w.customer_phone));
         if (rows.length) await insert(supabase, "waitlist", rows);
+        break;
+      }
+
+      // Cuándo se descargó la última copia. Es lo ÚNICO que escribe la
+      // exportación, y por eso va aquí y no en la ruta que la sirve: bajarse
+      // una copia no puede tocar ni una cita, ni un precio, ni un cierre.
+      //
+      // La fecha la pone el reloj del servidor y NO llega en la petición. Si
+      // viniera de fuera, cualquiera con el pase podría dejar escrito que la
+      // copia se hizo hoy sin haberla hecho, que es justamente el aviso que
+      // esta fecha existe para dar.
+      case "lastBackup": {
+        const { error } = await supabase
+          .from("app_meta")
+          .upsert({ key: CLAVE_ULTIMA_COPIA, value: new Date().toISOString() }, { onConflict: "key" });
+        if (error) throw new Error(error.message);
         break;
       }
 
