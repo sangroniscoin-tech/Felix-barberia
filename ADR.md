@@ -103,21 +103,30 @@ endorsement.
   cancellations in the same slot; it is `NULL` for everything cancelled before #54.
 - **Money counts what was collected, not what was booked.** A `no_show` appointment is
   worth zero in every money figure, and so is one whose hour has not passed yet — a
-  booking for next week is forecast, not takings. The appointment *counts* still include
-  the no-shows, because the slot was occupied and could not be resold. The default is
-  "came" — nothing is confirmed one by one, so an unmarked day reads almost right instead
-  of reading €0. Any new money figure must exclude `noShow` explicitly: the
-  per-appointment price helper deliberately does **not** know about it, because the losses
-  figure needs to price exactly the ones that were not collected.
-- **How an appointment was paid is Félix's accounting, and unmarked is its own number.**
-  `payment_method` is `NULL` until he says otherwise, and that `NULL` is displayed as "sin
-  marcar" beside efectivo/tarjeta/bizum — never folded into cash. Nothing was backfilled,
-  for the same reason: assuming a year of takings were cash would be inventing them. It is
-  written **only** by `PATCH /api/cobro`, which checks the admin pass before parsing the
-  body; it must never join the public `PATCH /api/appointments`, which cancels on the id
-  alone. It leaves only through `admin-data`. Marking a payment clears `no_show` and
-  marking `no_show` clears the payment, both server-side — nobody paid for not turning up.
-  The annual purge does not touch the column: the row loses its person and keeps its money.
+  booking for next week is forecast, not takings. The appointment *counts* keep the
+  no-shows, because the slot was occupied and could not be resold, and the panel splits
+  them into "hechas" and "por venir" **off the same `hasPassed` boundary the money uses**:
+  a second notion of "already happened" is what makes two cards on one screen disagree.
+  Any new money figure must exclude `noShow` explicitly — the per-appointment price helper
+  deliberately does **not** know about it, because the losses figure has to price exactly
+  the ones that were not collected.
+- **How an appointment was paid is recorded two ways, and the same day must never be
+  counted by both.** `payment_method` is `NULL` until Félix says otherwise, and that `NULL`
+  shows as "sin marcar" — never folded into cash. `daily_closes` holds one row per closed
+  day with the card and Bizum totals he reads off the datáfono; **cash is derived,
+  `total − card − bizum`, and is never stored**, because a stored derived figure is how a
+  day stops adding up. The day's total is computed **server-side** from that day's passed,
+  uncancelled, non-`no_show` appointments — never accepted from the browser — and "today"
+  is `Europe/Madrid`, not the server's UTC. A period composes day by day: a closed day
+  from its close with "sin marcar" at 0, an open day from its per-appointment marks. If a
+  later `no_show` drops a day's total below what was declared, it reads as a close to
+  review with cash pinned at 0, **never negative**. Written only by `PATCH /api/cobro` and
+  `PUT`/`DELETE /api/cierre`, both checking the admin pass before parsing the body; neither
+  may ever join the public `PATCH /api/appointments`, which cancels on the id alone. Both
+  leave only through `admin-data`. Marking a payment clears `no_show` and marking `no_show`
+  clears the payment, server-side — nobody paid for not turning up. Nothing was ever
+  backfilled: assuming a year of takings were cash would be inventing them. The annual
+  purge touches neither — the row loses its person and keeps its money.
 
 **Getting to production**
 
@@ -137,8 +146,10 @@ endorsement.
   whatever is on `main` is what customers get, live about 20 seconds after the merge. A
   merge whose output is byte-identical to an existing preview publishes nothing, which is
   correct, not a fault.
-- `/next` is the default way of working, not a command. Nobody should need to know it
-  exists.
+- **`api/` is at 12 functions, which is exactly Vercel Hobby's per-deployment ceiling.**
+  `cierre.js` was the twelfth and it deployed; the *next* new route will not. A new
+  capability has to go inside an existing function, or the plan has to change — either way
+  it is a decision to take before writing the route, not after the deploy fails.
 - Every PR closes its issue, and the issue's label is its stage. Auto-close doesn't
   always fire, so the issue is verified closed by hand.
 - **One issue solves one problem, and one PR closes one issue.** Bundling is what makes a

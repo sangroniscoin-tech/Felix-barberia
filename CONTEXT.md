@@ -40,11 +40,18 @@ acceptance criteria on every change from here on:
   by one. That mark is what makes the takings real: an absence is worth €0 and shows up
   beside them as "perdido por ausencias", which is the only place he sees what the
   no-shows cost him.
-- **Marca cómo le han pagado** —efectivo, tarjeta o Bizum— con tres botones en cada cita
-  ya pasada; en un grupo se marca la reserva entera, porque paga uno por todos. Con eso el
-  panel le enseña el dinero cobrado del día, de la semana y del mes repartido por esas tres
-  vías, más lo que aún no ha marcado. Lo que no marca no se cuenta como efectivo: se ve
-  aparte.
+- **Cierra la caja del día por importe.** Al terminar mira el datáfono, escribe lo que pasó
+  por tarjeta y lo que le llegó por Bizum, y **el efectivo es lo que sobra** del total del
+  día. Lo pidió así: marcar cliente a cliente era trabajo que su forma de cobrar no
+  necesita, y como sus cortes no valen todos igual, "cuatro tarjetas" es ambiguo y 20 € no.
+  Un día que no cierra se ve como **"sin cerrar"**, nunca como efectivo, y la semana y el
+  mes le dicen cuántos le quedan. Un día cerrado deja de saber qué cliente pagó con qué —
+  se le advirtió y le da igual: lo que necesita es el reparto del día.
+- Los tres botones de cada cita —efectivo, tarjeta, Bizum— **siguen ahí y ya no son
+  obligatorios**, para el día que quiera marcar una suelta; en un grupo se marca la reserva
+  entera, porque paga uno por todos. El panel le reparte el dinero del día, la semana y el
+  mes por esas tres vías, y el recuento de citas le dice **cuántas lleva hechas y cuántas le
+  quedan por venir**: mezclarlas le hacía leer como cobrado lo que sólo estaba reservado.
 - **His phone rings when a customer books or cancels** — not when he writes a booking in
   himself, which he already knows about. The notice says only the day, the hour and the
   service, because it lands on a lock screen; tapping it opens the panel on that day with
@@ -64,7 +71,11 @@ acceptance criteria on every change from here on:
   `felix-barberia.vercel.app`. Don't re-offer one unasked.
 - **No customer accounts and no passwords.** A name and a phone is the whole identity.
   Félix's own panel password is the one exception, and it lives in Vercel, not the code.
-- **No payments.** Nobody pays through the app.
+- **No payments**, re-offered and declined on 2026-08-05. Charging through the web was the
+  only way to split the takings with no typing at all; he turned it down — pago por
+  adelantado, comisiones y un proveedor más. He also turned down a **default payment
+  method** (everything unmarked counted as cash) and chose the daily close instead,
+  because he wants to see what he is signing off before it counts.
 - **No cookie banner, and that is correct.** No analytics, no trackers, nothing in
   `localStorage` or `document.cookie` — only the admin session, which is strictly
   necessary. Adding a banner would be theatre, and the privacy notice says so in writing.
