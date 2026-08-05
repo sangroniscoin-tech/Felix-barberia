@@ -46,6 +46,23 @@ export function appointmentOut(r) {
   return out;
 }
 
+// El cierre de caja de un día. Sin efectivo dentro: el efectivo es el total
+// del día menos estas dos cifras, y se calcula al pintarlo. Guardar —o
+// servir— una cifra derivada es la forma de que un día deje de cuadrar con
+// las otras dos en cuanto una se corrija.
+//
+// Sale SÓLO por admin-data, detrás de la clave del panel: es la contabilidad
+// de Félix y no la lee nadie más. Ninguna ruta pública lo lleva.
+export function closeOut(r) {
+  return {
+    dateKey: r.close_date,
+    card: Number(r.card_total),
+    bizum: Number(r.bizum_total),
+    closedAt: r.closed_at,
+    updatedAt: r.updated_at,
+  };
+}
+
 // Una cita tal y como puede verla CUALQUIERA: cuándo empieza, cuánto dura y
 // con qué barbero. Ni nombre, ni teléfono, ni correo, ni id.
 //

@@ -6,7 +6,7 @@
 // panel tuviera que ir primero: sin una puerta con llave no había ningún
 // sitio desde el que darle a Félix lo que sí necesita ver.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
-import { appointmentOut, waitlistOut } from "./_lib/shape.js";
+import { appointmentOut, waitlistOut, closeOut } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 
 // Un día, o nada. Lo que llegue en la query lo escribe quien quiera: si no es
@@ -40,6 +40,11 @@ export default async function handler(req, res) {
       // lista del día salen de aquí, y las canceladas siguen fuera de todos.
       supabase.from("appointments").select("*").eq("is_sample_data", false).neq("status", "cancelled"),
       supabase.from("waitlist").select("*").order("created_at"),
+      // Los cierres de caja, todos. Es una fila por día trabajado y sólo
+      // lleva una fecha y dos importes: cabe de sobra aquí, y así el panel
+      // reparte el dinero de cualquier día, semana o mes sin una segunda
+      // vuelta al servidor por cada pantalla que se abre.
+      supabase.from("daily_closes").select("*").order("close_date"),
     ];
     if (dia) {
       consultas.push(
@@ -50,8 +55,8 @@ export default async function handler(req, res) {
       );
     }
 
-    const [appointments, waitlist, cancelled] = await Promise.all(consultas);
-    for (const r of [appointments, waitlist, cancelled]) {
+    const [appointments, waitlist, closes, cancelled] = await Promise.all(consultas);
+    for (const r of [appointments, waitlist, closes, cancelled]) {
       if (r && r.error) throw new Error(r.error.message);
     }
 
@@ -62,6 +67,7 @@ export default async function handler(req, res) {
       ok: true,
       appointments: appointments.data.map(appointmentOut),
       waitlist: waitlist.data.map(waitlistOut),
+      closes: closes.data.map(closeOut),
     };
     // Sin el parámetro, la respuesta es exactamente la de siempre: ni un campo
     // más. Quien no pregunta por canceladas no se entera de que existen.
