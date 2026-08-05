@@ -704,6 +704,18 @@ export default function FelixBarberiaApp() {
     return body.appointment;
   }
 
+  // Apuntar cómo se cobró: "efectivo", "tarjeta", "bizum" o null para dejarla
+  // sin marcar. Va por su propia ruta y CON pase: es la contabilidad de Félix,
+  // no algo que pueda tocar quien acierte el identificador de una cita.
+  //
+  // Con groupId marca la reserva entera de una vez, que es lo que pidió el
+  // cliente: en un grupo paga uno por todos.
+  async function setAppointmentPayment({ id, groupId }, metodo) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    const body = await apiSend("/api/cobro", "PATCH", groupId ? { groupId, metodo } : { id, metodo }, { auth: true });
+    return body.appointment || (body.appointments || []).find((a) => a.id === id) || null;
+  }
+
   // Las reservas temporales recién leídas, para poder consultarlas justo
   // después de un refresco sin esperar a que React vuelva a pintar.
   const latestHoldsRef = useRef([]);
@@ -752,7 +764,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -2514,7 +2526,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2618,19 +2630,6 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     return appointments.filter((a) => keys.includes(a.dateKey));
   }, [appointments, weekDays]);
 
-  // Dinero cobrado: quien no se presentó no paga, así que no suma. `apptPrice`
-  // se queda valorando la cita igual —lo que cambia es quién entra en la suma,
-  // no cuánto vale— porque lo perdido por ausencias se calcula con la misma
-  // función y necesita poder valorar precisamente las que no se cobraron.
-  //
-  // Las canceladas no aparecen por aquí: `admin-data` no se las sirve al panel.
-  //
-  // El recuento de citas sí las cuenta, a propósito: el hueco lo ocuparon
-  // igual y no se le pudo dar a otro. La diferencia entre lo reservado y lo
-  // cobrado es justo lo que Félix quiere ver.
-  const weekIncome = useMemo(() => weekAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [weekAppts, services]);
-  const monthIncome = useMemo(() => monthAppts.reduce((sum, a) => sum + (a.noShow ? 0 : apptPrice(a)), 0), [monthAppts, services]);
-
   // Lo que se habría cobrado de quienes no se presentaron. Es el complemento
   // exacto de las dos cifras de arriba: cobrado más perdido es lo que la cifra
   // de ingresos sumaba antes de dejar fuera a los ausentes.
@@ -2658,6 +2657,55 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   function hasPassed(a) {
     return new Date(`${a.dateKey}T${a.time}`).getTime() <= now;
   }
+
+  // Dinero cobrado, repartido por cómo se pagó. Vive debajo de `hasPassed` y
+  // de `now` porque los usa: subirlo lo rompería antes de pintar nada.
+  //
+  // Quien no se presentó no paga, así que no suma. `apptPrice` se queda
+  // valorando la cita igual —lo que cambia es quién entra en la suma, no
+  // cuánto vale— porque lo perdido por ausencias se calcula con la misma
+  // función y necesita poder valorar precisamente las que no se cobraron.
+  //
+  // Sólo entra lo que YA HA PASADO. Una cita reservada para la semana que
+  // viene no es dinero cobrado, es dinero previsto; contarla llenaría "sin
+  // marcar" —lo que a Félix se le ha olvidado apuntar— de citas que
+  // sencillamente todavía no han llegado.
+  //
+  // Las canceladas no aparecen por aquí: `admin-data` no se las sirve al panel.
+  //
+  // El recuento de citas sí cuenta a los ausentes, a propósito: el hueco lo
+  // ocuparon igual y no se le pudo dar a otro. La diferencia entre lo
+  // reservado y lo cobrado es justo lo que Félix quiere ver.
+  //
+  // `total` es la suma exacta de las cuatro de abajo. Si dejaran de cuadrar,
+  // la pantalla estaría mintiendo en la única cifra con la que se cuadra la
+  // caja al cerrar.
+  function breakdown(list) {
+    const out = { total: 0, efectivo: 0, tarjeta: 0, bizum: 0, sinMarcar: 0 };
+    for (const a of list) {
+      if (a.noShow || !hasPassed(a)) continue;
+      const p = apptPrice(a);
+      out.total += p;
+      // Cualquier cosa que no sea uno de los tres cae en "sin marcar", que es
+      // donde tiene que caer un null y donde no hace daño nada inesperado.
+      if (a.paymentMethod === "efectivo") out.efectivo += p;
+      else if (a.paymentMethod === "tarjeta") out.tarjeta += p;
+      else if (a.paymentMethod === "bizum") out.bizum += p;
+      else out.sinMarcar += p;
+    }
+    return out;
+  }
+
+  // `now` entra en las dependencias a propósito: es lo que mueve la frontera
+  // entre pasado y futuro, así que las cifras se recalculan solas al pasar la
+  // hora de una cita, sin que Félix recargue nada.
+  const dayMoney = useMemo(() => breakdown(apptsForDate(cursorDate)), [appointments, cursorDate, services, now]);
+  const weekMoney = useMemo(() => breakdown(weekAppts), [weekAppts, services, now]);
+  const monthMoney = useMemo(() => breakdown(monthAppts), [monthAppts, services, now]);
+
+  // El bloque de dinero de un día futuro serían cinco ceros, que se leen como
+  // una pantalla rota y no como "de mañana todavía no se ha cobrado nada".
+  const dayIsPast = dateKey(cursorDate) <= dateKey(new Date());
 
   const searchResults = search.length > 0
     ? appointments.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()) || a.phone.includes(search))
@@ -2747,6 +2795,23 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   async function toggleNoShow(id) {
     const current = appointments.find((a) => a.id === id);
     await setNoShow(id, !(current && current.noShow));
+  }
+
+  // Marcar (o desmarcar) cómo se cobró una cita. Si es de un grupo se marca el
+  // grupo entero: paga uno por todos, y obligar a tocar tres veces lo mismo es
+  // pedir que se quede a medias.
+  //
+  // Si falla se dice y no se toca la pantalla: un botón que se pinta como
+  // guardado sin haberse guardado es peor que no tener botón.
+  async function setPago(id, metodo) {
+    const current = appointments.find((a) => a.id === id);
+    try {
+      const updated = await setAppointmentPayment({ id, groupId: current?.groupId }, metodo);
+      if (updated) setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
+      await refreshAppointments();
+    } catch (e) {
+      window.alert(`No se ha podido guardar: ${e.message}`);
+    }
   }
 
   function removeWaitlistEntry(id) {
@@ -2871,8 +2936,15 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   </LoadingRegion>
                 ) : apptsForDate(cursorDate).length === 0 ? (
                   <EmptyState text="Sin citas este día." />
-                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} />)}
+                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} onSetPago={(metodo) => setPago(a.id, metodo)} />)}
               </div>
+              {/* El dinero del día, debajo de la lista: primero quién viene,
+                  que es para lo que se abre esta pantalla, y después la caja.
+                  En un día que todavía no ha llegado no se enseña — no hay
+                  nada cobrado y cinco ceros se leen como una avería. */}
+              {dataLoaded && dayIsPast && (
+                <MoneyBlock m={dayMoney} totalLabel={dateKey(cursorDate) === dateKey(new Date()) ? "Cobrado hoy" : "Cobrado ese día"} />
+              )}
               {/* Sin servicios no se puede apuntar una cita: la ventana arranca
                   eligiendo el primero de la lista. Antes esa lista nunca estaba
                   vacía porque el código traía tres servicios inventados; ahora
@@ -2887,12 +2959,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -7))} onNext={() => setCursorDate(addDays(cursorDate, 7))} label={`Semana del ${weekDays[0].getDate()} ${MESES[weekDays[0].getMonth()]}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
                 <StatCard label="Citas de la semana" value={weekAppts.length} />
-                <StatCard label="Cobrado esta semana" value={`${weekIncome}€`} />
+                <StatCard label="Cobrado esta semana" value={`${weekMoney.total}€`} />
                 {/* Un cero se enseña, no se esconde: significa que esta semana
                     vinieron todos, y un recuadro que aparece y desaparece
                     movería de sitio el resto de la pantalla. */}
                 <StatCard label="Perdido por ausencias" value={`${weekLost}€`} tone="perdida" wide />
               </div>
+              <MoneyBlock m={weekMoney} />
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 {weekDays.map((d) => (
                   <div key={dateKey(d)} className="card" style={{ borderRadius: 12, padding: 12 }}>
@@ -2922,10 +2995,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -30))} onNext={() => setCursorDate(addDays(cursorDate, 30))} label={`${MESES[cursorDate.getMonth()][0].toUpperCase() + MESES[cursorDate.getMonth()].slice(1)} ${cursorDate.getFullYear()}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 16, marginBottom: 10 }}>
-                <StatCard label="Cobrado este mes" value={`${monthIncome}€`} />
+                <StatCard label="Cobrado este mes" value={`${monthMoney.total}€`} />
                 <StatCard label="Citas del mes" value={stats.total} />
                 <StatCard label="Perdido por ausencias" value={`${monthLost}€`} tone="perdida" wide />
               </div>
+              <MoneyBlock m={monthMoney} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 20 }}>
                 <StatCard label="Clientes nuevos" value={stats.nuevos} />
                 <StatCard label="Habituales" value={stats.habituales} />
@@ -3055,7 +3129,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
         </>
       )}
 
-      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
+      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} onSetPago={(metodo) => setPago(selectedAppt.id, metodo)} past={hasPassed(selectedAppt)} />}
       {/* El modal recibe la agenda tal cual la tiene el panel: los huecos se
           calculan con lo que ya está cargado, sin volver a pedir nada. Para
           saberlos hacen falta las dos cargas: el horario y los días cerrados
@@ -3364,7 +3438,11 @@ const PURGED = "Datos borrados";
 const shownName = (a) => a.name || PURGED;
 const shownPhone = (a) => a.phone || "—";
 
-function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }) {
+// Las tres formas de cobro y su etiqueta. El valor es el que viaja al
+// servidor y el que guarda la columna; la etiqueta es la que lee Félix.
+const FORMAS_PAGO = [["efectivo", "Efectivo"], ["tarjeta", "Tarjeta"], ["bizum", "Bizum"]];
+
+function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow, onSetPago }) {
   const s = services.find((x) => x.id === a.service);
   const b = barbers?.find((x) => x.id === a.barberId);
   const [saving, setSaving] = useState(false);
@@ -3427,6 +3505,59 @@ function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }
           {markBtn("No vino", true)}
         </div>
       )}
+      {/* Cómo se cobró. No aparece en un ausente: a quien no vino no se le
+          cobró nada, y ofrecer el botón sería ofrecer un apunte imposible. */}
+      {past && !a.noShow && onSetPago && (
+        <PagoButtons a={a} groupSize={groupSize} onSetPago={onSetPago} />
+      )}
+    </div>
+  );
+}
+
+// Los tres botones de cobro. Volver a pulsar el que ya está puesto lo quita y
+// la cita vuelve a "sin marcar": es la única forma de deshacer un dedazo, y
+// "sin marcar" es una cifra de verdad en el panel, no un limbo.
+function PagoButtons({ a, groupSize, onSetPago, compact }) {
+  const [saving, setSaving] = useState(false);
+
+  async function elegir(metodo) {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSetPago(a.paymentMethod === metodo ? null : metodo);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: compact ? 0 : "0 12px 10px" }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        {FORMAS_PAGO.map(([valor, etiqueta]) => {
+          const activo = a.paymentMethod === valor;
+          return (
+            <button
+              key={valor}
+              onClick={() => elegir(valor)}
+              disabled={saving}
+              aria-pressed={activo}
+              className={activo ? undefined : "ghost-btn"}
+              style={{
+                flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11.5, fontWeight: activo ? 700 : 500,
+                cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1,
+                ...(activo ? { background: "rgba(201,162,39,0.16)", border: `1px solid ${GOLD}`, color: GOLD } : null),
+              }}
+            >
+              {etiqueta}
+            </button>
+          );
+        })}
+      </div>
+      {/* Se avisa antes de tocar, no después: marcar aquí mueve también las
+          citas de los demás del grupo, y eso hay que saberlo de antemano. */}
+      {a.groupId && groupSize > 1 && (
+        <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 5 }}>Se marca la reserva entera ({groupSize} personas)</div>
+      )}
     </div>
   );
 }
@@ -3466,14 +3597,38 @@ function LoadingRegion({ label, children, style, className }) {
 // `tone="perdida"` pinta la cifra en el rojo que el panel ya usa para el aviso
 // de "no se presentó", en vez del dorado. Es lo único que distingue de un
 // vistazo el dinero que se ha cobrado del que se ha dejado de cobrar, y las
-// dos cifras viven en la misma pantalla.
+// dos cifras viven en la misma pantalla. `tone="apagada"` la pinta en gris,
+// para el dinero que sí entró pero del que no consta cómo.
 //
 // `wide` la pone a lo ancho de la rejilla. La de ausencias es impar en las dos
 // pantallas, y media fila vacía a su lado se lee como algo que falta.
+// El dinero cobrado, repartido en las cuatro cifras que Félix pidió: efectivo,
+// tarjeta, Bizum y lo que todavía no ha marcado. Las cuatro suman el total.
+//
+// "Sin marcar" va en gris y no en dorado a propósito: no es dinero de otra
+// procedencia, es dinero cuya procedencia no consta, y leerlo igual que los
+// otros tres invitaría a darlo por bueno. Se enseña aunque valga 0 € — un
+// recuadro que aparece y desaparece movería el resto de la pantalla, y un cero
+// ahí es la buena noticia de que está todo apuntado.
+//
+// `totalLabel` sólo lo usa la pantalla del día, que no tiene ningún recuadro
+// de total propio; la semana y el mes ya traen el suyo encima.
+function MoneyBlock({ m, totalLabel }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
+      {totalLabel && <StatCard label={totalLabel} value={`${m.total}€`} wide />}
+      <StatCard label="Efectivo" value={`${m.efectivo}€`} />
+      <StatCard label="Tarjeta" value={`${m.tarjeta}€`} />
+      <StatCard label="Bizum" value={`${m.bizum}€`} />
+      <StatCard label="Sin marcar" value={`${m.sinMarcar}€`} tone="apagada" />
+    </div>
+  );
+}
+
 function StatCard({ label, value, tone, wide }) {
   return (
     <div className="card" style={{ borderRadius: 12, padding: "14px 10px", textAlign: "center", ...(wide ? { gridColumn: "1 / -1" } : null) }}>
-      <div className="display" style={{ fontSize: 24, color: tone === "perdida" ? "#e0a0a0" : GOLD, fontWeight: 700 }}>{value}</div>
+      <div className="display" style={{ fontSize: 24, color: tone === "perdida" ? "#e0a0a0" : tone === "apagada" ? SMOKE : GOLD, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 2 }}>{label}</div>
     </div>
   );
@@ -3668,7 +3823,7 @@ function ModalShell({ title, onClose, children }) {
 // puede llamar —que es justo para lo que se abre desde un aviso— pero no lleva
 // "Cancelar cita" ni "Marcar como no se presentó". No hay nada que cancelar ni
 // nadie a quien esperar, y ofrecerlo sería ofrecer un botón que miente.
-function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow }) {
+function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow, onSetPago, past }) {
   const s = services.find((x) => x.id === appt.service);
   const b = barbers?.find((x) => x.id === appt.barberId);
   const cancelada = !!appt.cancelada;
@@ -3698,6 +3853,14 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
       {!cancelada && appt.noShow && (
         <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12, textAlign: "center" }}>
           Marcado como "no se presentó"
+        </div>
+      )}
+      {/* Igual que en la lista del día: sólo cuando la hora ya pasó, y nunca
+          en un ausente ni en una cancelada, que no cobraron nada. */}
+      {!cancelada && !appt.noShow && past && onSetPago && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 6 }}>Cómo ha pagado</div>
+          <PagoButtons a={appt} groupSize={groupSize} onSetPago={onSetPago} compact />
         </div>
       )}
       {cancelada && (

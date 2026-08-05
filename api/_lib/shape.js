@@ -23,6 +23,12 @@ export function appointmentOut(r) {
     // El panel de Félix trabaja con un booleano; la base guarda un estado.
     noShow: r.status === "no_show",
   };
+  // Cómo se cobró, o null si nadie lo ha marcado. Va SIEMPRE, incluso vacío,
+  // porque "sin marcar" es una de las cifras del panel: tiene que poder
+  // distinguirse de un campo que no ha llegado. Solo sale por admin-data —
+  // ni busyBlockOut ni myAppointmentOut lo llevan, que es lo que mantiene la
+  // contabilidad fuera de todo lo público.
+  out.paymentMethod = r.payment_method ?? null;
   // Las dos filas antiguas no guardaban duración ni precio. No se inventan
   // al cargar: se rellenan aquí con lo que vale el servicio hoy.
   if (r.duration_minutes != null) out.duration = r.duration_minutes;
