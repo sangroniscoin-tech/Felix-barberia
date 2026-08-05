@@ -57,9 +57,8 @@ endorsement.
   15 €/10 €/22 € for half a second before the real prices arrived.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
-- **Nothing calls Google any more.** The email notice never worked and cost up to 10 s per
-  booking, so the call went (#40, #53). The script is still deployed and unreachable by any
-  agent; leave it closed and quiet. Web Push tells Félix now.
+- **Nothing calls Google any more** (#40, #53). The script is still deployed and
+  unreachable by any agent; leave it closed and quiet. Web Push tells Félix now.
 - **How far ahead you can book is one number, `DIAS_MAX_RESERVA` in `shared/`, read by both
   doors.** The day selector in `src/App.jsx` and the validation in `api/appointments.js`
   import the same constant. A copy on each side is exactly what let the page offer 14 days
@@ -103,12 +102,22 @@ endorsement.
   honest. Their card is read-only. `cancelled_at` is what breaks the tie between two
   cancellations in the same slot; it is `NULL` for everything cancelled before #54.
 - **Money counts what was collected, not what was booked.** A `no_show` appointment is
-  worth zero in every money figure; the appointment *counts* still include it, because the
-  slot was occupied and could not be resold. The default is "came" — nothing is confirmed
-  one by one, so an unmarked day reads almost right instead of reading €0. Any new money
-  figure must exclude `noShow` explicitly: the per-appointment price helper deliberately
-  does **not** know about it, because the losses figure needs to price exactly the ones
-  that were not collected.
+  worth zero in every money figure, and so is one whose hour has not passed yet — a
+  booking for next week is forecast, not takings. The appointment *counts* still include
+  the no-shows, because the slot was occupied and could not be resold. The default is
+  "came" — nothing is confirmed one by one, so an unmarked day reads almost right instead
+  of reading €0. Any new money figure must exclude `noShow` explicitly: the
+  per-appointment price helper deliberately does **not** know about it, because the losses
+  figure needs to price exactly the ones that were not collected.
+- **How an appointment was paid is Félix's accounting, and unmarked is its own number.**
+  `payment_method` is `NULL` until he says otherwise, and that `NULL` is displayed as "sin
+  marcar" beside efectivo/tarjeta/bizum — never folded into cash. Nothing was backfilled,
+  for the same reason: assuming a year of takings were cash would be inventing them. It is
+  written **only** by `PATCH /api/cobro`, which checks the admin pass before parsing the
+  body; it must never join the public `PATCH /api/appointments`, which cancels on the id
+  alone. It leaves only through `admin-data`. Marking a payment clears `no_show` and
+  marking `no_show` clears the payment, both server-side — nobody paid for not turning up.
+  The annual purge does not touch the column: the row loses its person and keeps its money.
 
 **Getting to production**
 
