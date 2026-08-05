@@ -52,6 +52,12 @@ acceptance criteria on every change from here on:
   entera, porque paga uno por todos. El panel le reparte el dinero del día, la semana y el
   mes por esas tres vías, y el recuento de citas le dice **cuántas lleva hechas y cuántas le
   quedan por venir**: mezclarlas le hacía leer como cobrado lo que sólo estaba reservado.
+- **Se descarga su propia copia de seguridad** desde el panel: un archivo con todo —citas,
+  clientes, lista de espera, servicios, horarios, festivos, vacaciones y cierres— que le
+  dice cuántas filas lleva dentro, y una fecha de la última copia que se pone en ámbar
+  pasado el mes. Cae en su móvil y **es él quien la manda a otro sitio**; se le explicó que
+  una copia que vive en el móvil que puedes perder no es una copia. Lleva nombres y
+  teléfonos: es el mismo fichero de clientes del que ya es responsable.
 - **His phone rings when a customer books or cancels** — not when he writes a booking in
   himself, which he already knows about. The notice says only the day, the hour and the
   service, because it lands on a lock screen; tapping it opens the panel on that day with
@@ -81,5 +87,13 @@ acceptance criteria on every change from here on:
   necessary. Adding a banner would be theatre, and the privacy notice says so in writing.
 - **The gallery photos still come from the code**, not from the database. Uploading them
   needs file storage; it was left out of the Supabase migration on purpose.
+- **No restore button, and no copy that uploads itself.** The backup is a file he
+  downloads and forwards by hand: sending it anywhere on its own means another service and
+  another credential, and restoring is a rare, dangerous operation done with someone
+  watching, not with a button. Both were offered as scope and deliberately left out.
+- **No install-the-app banner.** The site is already installable and he has a QR poster;
+  a prompt at the door interrupts the one thing a customer came to do. He was told plainly
+  that an icon buys them nothing here — there are no customer notifications and nothing is
+  cached offline on purpose — and it was parked, not refused.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.

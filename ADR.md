@@ -142,14 +142,22 @@ endorsement.
 - CI is the merge gate, and it runs `npm run build` only. **Green means it compiles, not
   that it works.** There are no tests, no linter and no formatter to add to it.
 - Deployment is Vercel's native Git integration, not an Action: an Action would need a
-  token to do what the integration does with no credentials at all. There is no staging —
-  whatever is on `main` is what customers get, live about 20 seconds after the merge. A
-  merge whose output is byte-identical to an existing preview publishes nothing, which is
-  correct, not a fault.
+  token to do what the integration does with no credentials at all. **There is no
+  staging** — whatever is on `main` is what customers get.
 - **`api/` is at 12 functions, which is exactly Vercel Hobby's per-deployment ceiling.**
   `cierre.js` was the twelfth and it deployed; the *next* new route will not. A new
   capability has to go inside an existing function, or the plan has to change — either way
-  it is a decision to take before writing the route, not after the deploy fails.
+  it is a decision to take before writing the route, not after the deploy fails. The
+  backup export is the precedent: it is a branch of the panel's own data route
+  (`?copia=1`), not a route of its own, and its shared code lives under `_lib/`, which
+  Vercel does not count. That is the shape any new capability has to take from here.
+- **The backup is a full server-side dump, and it pages.** It reads every business table
+  directly — including the cancelled appointments the panel never receives — so it cannot
+  be rebuilt from whatever the browser happened to have loaded. It fetches in 1000-row
+  chunks because PostgREST caps a response silently, and a truncated backup looks exactly
+  like a complete one. Anything new that dumps or counts rows inherits that. It writes
+  nothing but the last-backup stamp, and that stamp is taken from the **server's** clock,
+  never from the request.
 - Every PR closes its issue, and the issue's label is its stage. Auto-close doesn't
   always fire, so the issue is verified closed by hand.
 - **One issue solves one problem, and one PR closes one issue.** Bundling is what makes a
