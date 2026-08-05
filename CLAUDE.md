@@ -94,7 +94,8 @@ The browser no longer calls Google at all: that leg was removed in #53.
 
 - `api/` — the server. `_lib/supabase.js` is the **only** place credentials are read; it
   never enters the browser bundle. `bootstrap.js` (everything the app needs on load),
-  `appointments.js` (create/cancel), `admin.js` (config), `health.js` (mandate zero).
+  `appointments.js` (create/cancel), `admin.js` (config), `cobro.js` (how an appointment
+  was paid — admin pass required), `health.js` (mandate zero).
 - Every table has RLS **on with no policies** and no grants to `anon`/`authenticated`, so
   the publishable key grants nothing. All access goes through the server.
 - **Two appointments can no longer overlap**: an exclusion constraint on `appointments`

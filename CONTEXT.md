@@ -40,6 +40,11 @@ acceptance criteria on every change from here on:
   by one. That mark is what makes the takings real: an absence is worth €0 and shows up
   beside them as "perdido por ausencias", which is the only place he sees what the
   no-shows cost him.
+- **Marca cómo le han pagado** —efectivo, tarjeta o Bizum— con tres botones en cada cita
+  ya pasada; en un grupo se marca la reserva entera, porque paga uno por todos. Con eso el
+  panel le enseña el dinero cobrado del día, de la semana y del mes repartido por esas tres
+  vías, más lo que aún no ha marcado. Lo que no marca no se cuenta como efectivo: se ve
+  aparte.
 - **His phone rings when a customer books or cancels** — not when he writes a booking in
   himself, which he already knows about. The notice says only the day, the hour and the
   service, because it lands on a lock screen; tapping it opens the panel on that day with
