@@ -267,9 +267,16 @@ export default async function handler(req, res) {
       // sirve para marcar "no se presentó" y para quitar la marca, y ahí no hay
       // ninguna cancelación que fechar; y una cita que vuelve a "booked" tiene
       // que perder la fecha, o arrastraría la de una cancelación deshecha.
+      //
+      // Marcar "no se presentó" borra además la forma de pago: quien no vino
+      // no pagó, y un cobro apuntado a un ausente descuadraría las cifras del
+      // panel, que suman 0 € por él. La regla contraria vive en /api/cobro,
+      // donde marcar un cobro quita la marca de ausente.
       const cambios = status === "cancelled"
         ? { status, cancelled_at: new Date().toISOString() }
-        : { status, cancelled_at: null };
+        : status === "no_show"
+          ? { status, cancelled_at: null, payment_method: null }
+          : { status, cancelled_at: null };
       const { data, error } = await supabase
         .from("appointments").update(cambios).eq("id", id).select().single();
       if (error || !data) {
