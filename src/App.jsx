@@ -2703,6 +2703,31 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   const weekMoney = useMemo(() => breakdown(weekAppts), [weekAppts, services, now]);
   const monthMoney = useMemo(() => breakdown(monthAppts), [monthAppts, services, now]);
 
+  // El recuento de citas, partido en las que ya se han hecho y las que faltan
+  // por venir. Pegado al recuadro del dinero, un número que subía en cuanto
+  // alguien reservaba para la semana que viene se leía como trabajo ya hecho y
+  // ya cobrado; son dos cosas distintas y ahora se enseñan como dos.
+  //
+  // La frontera es `hasPassed`, exactamente la misma que usa `breakdown()`. No
+  // se escribe aquí una segunda noción de "ya ha pasado": dos recuadros de la
+  // misma pantalla discrepando sobre el mismo día es lo que hace que Félix deje
+  // de fiarse de la pantalla.
+  //
+  // Los ausentes cuentan como hechas: el hueco se ocupó y no se pudo revender,
+  // que es la regla que el recuento ya seguía. `hechas + porVenir` es siempre
+  // el número que se enseñaba antes, así que nada se pierde por el camino.
+  //
+  // `now` va en las dependencias por lo mismo que en el dinero: es lo que mueve
+  // la frontera, y con el panel abierto encima del mostrador el reparto se
+  // recoloca solo al minuto de pasar la hora de una cita.
+  function splitCount(list) {
+    let hechas = 0;
+    for (const a of list) if (hasPassed(a)) hechas++;
+    return { hechas, porVenir: list.length - hechas };
+  }
+  const weekCounts = useMemo(() => splitCount(weekAppts), [weekAppts, now]);
+  const monthCounts = useMemo(() => splitCount(monthAppts), [monthAppts, now]);
+
   // El bloque de dinero de un día futuro serían cinco ceros, que se leen como
   // una pantalla rota y no como "de mañana todavía no se ha cobrado nada".
   const dayIsPast = dateKey(cursorDate) <= dateKey(new Date());
@@ -2740,7 +2765,6 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   }, [identified]);
 
   const stats = useMemo(() => {
-    const total = monthAppts.length;
     const uniqueClients = new Set(monthAppts.filter((a) => a.phone).map((a) => a.phone));
     const freq = {};
     identified.forEach((a) => { freq[a.phone] = (freq[a.phone] || 0) + 1; });
@@ -2752,7 +2776,10 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     identified.forEach((a) => { if (a.noShow) noShowFreq[a.phone] = (noShowFreq[a.phone] || 0) + 1; });
     const topNoShow = Object.entries(noShowFreq).sort((a, b) => b[1] - a[1]).slice(0, 3)
       .map(([phone, count]) => ({ name: identified.find((a) => a.phone === phone)?.name, count }));
-    return { total, nuevos, habituales, top, topNoShow };
+    // Sin `total`: el recuento del mes lo lleva `monthCounts`, partido en
+    // hechas y por venir. Dejarlo aquí sería una segunda cuenta del mismo mes
+    // esperando a discrepar de la que se enseña.
+    return { nuevos, habituales, top, topNoShow };
   }, [monthAppts, identified]);
 
   async function cancelAppt(id) {
@@ -2958,7 +2985,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -7))} onNext={() => setCursorDate(addDays(cursorDate, 7))} label={`Semana del ${weekDays[0].getDate()} ${MESES[weekDays[0].getMonth()]}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
-                <StatCard label="Citas de la semana" value={weekAppts.length} />
+                <StatCard label="Citas hechas esta semana" value={weekCounts.hechas} sub={weekCounts.porVenir > 0 ? `${weekCounts.porVenir} por venir` : null} />
                 <StatCard label="Cobrado esta semana" value={`${weekMoney.total}€`} />
                 {/* Un cero se enseña, no se esconde: significa que esta semana
                     vinieron todos, y un recuadro que aparece y desaparece
@@ -2996,7 +3023,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -30))} onNext={() => setCursorDate(addDays(cursorDate, 30))} label={`${MESES[cursorDate.getMonth()][0].toUpperCase() + MESES[cursorDate.getMonth()].slice(1)} ${cursorDate.getFullYear()}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 16, marginBottom: 10 }}>
                 <StatCard label="Cobrado este mes" value={`${monthMoney.total}€`} />
-                <StatCard label="Citas del mes" value={stats.total} />
+                <StatCard label="Citas hechas este mes" value={monthCounts.hechas} sub={monthCounts.porVenir > 0 ? `${monthCounts.porVenir} por venir` : null} />
                 <StatCard label="Perdido por ausencias" value={`${monthLost}€`} tone="perdida" wide />
               </div>
               <MoneyBlock m={monthMoney} />
@@ -3625,11 +3652,17 @@ function MoneyBlock({ m, totalLabel }) {
   );
 }
 
-function StatCard({ label, value, tone, wide }) {
+// `sub` es una línea secundaria opcional bajo la etiqueta. Es opcional a
+// propósito: quien no la pasa —o la pasa vacía— ve el recuadro exactamente
+// como antes, sin hueco reservado ni coletilla permanente. Un "0 por venir"
+// fijo en un mes ya cerrado es ruido, y así no hay dos componentes de recuadro
+// distintos conviviendo en el panel.
+function StatCard({ label, value, tone, wide, sub }) {
   return (
     <div className="card" style={{ borderRadius: 12, padding: "14px 10px", textAlign: "center", ...(wide ? { gridColumn: "1 / -1" } : null) }}>
       <div className="display" style={{ fontSize: 24, color: tone === "perdida" ? "#e0a0a0" : tone === "apagada" ? SMOKE : GOLD, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 2 }}>{label}</div>
+      {sub && <div style={{ fontSize: 10, color: SMOKE, opacity: 0.75, marginTop: 3 }}>{sub}</div>}
     </div>
   );
 }
