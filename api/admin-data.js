@@ -8,6 +8,8 @@
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { appointmentOut, waitlistOut, closeOut } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
+import { armarCopia } from "./_lib/copia.js";
+import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
 
 // Un día, o nada. Lo que llegue en la query lo escribe quien quiera: si no es
 // exactamente una fecha, no se consulta nada — nunca se mete en la consulta
@@ -27,6 +29,21 @@ export default async function handler(req, res) {
   try {
     const supabase = getSupabase();
 
+    // La copia de seguridad entera. Es una RAMA de esta ruta y no una función
+    // nueva: `api/` está en el techo de 12 del plan Hobby de Vercel. Sale por
+    // aquí porque aquí es donde ya está la llave del panel — y la llave ya se
+    // ha comprobado arriba, antes de tocar la base de datos.
+    //
+    // Quien no pide la copia no se entera de que existe: sin el parámetro, la
+    // respuesta de siempre no lleva ni un campo de más por este lado.
+    if (req.query && req.query.copia) {
+      const copia = await armarCopia(supabase);
+      // Datos personales: no se cachean en ningún sitio, nunca. Menos aún
+      // éstos, que son la clientela entera en un solo fichero.
+      res.setHeader("Cache-Control", "no-store, private");
+      return res.status(200).json({ ok: true, copia });
+    }
+
     // Las canceladas de UN día, y sólo si se piden. Es lo que deja que tocar
     // un aviso de cancelación abra la ficha de quien canceló: sin esto no hay
     // forma de volver a verle, porque la consulta de siempre las excluye.
@@ -45,6 +62,11 @@ export default async function handler(req, res) {
       // reparte el dinero de cualquier día, semana o mes sin una segunda
       // vuelta al servidor por cada pantalla que se abre.
       supabase.from("daily_closes").select("*").order("close_date"),
+      // Cuándo se descargó la última copia. Una fila de app_meta, o ninguna si
+      // no se ha hecho nunca. Viaja con el resto de la carga del panel para
+      // que el recordatorio esté en pantalla desde que Félix entra, sin una
+      // segunda vuelta al servidor sólo para una fecha.
+      supabase.from("app_meta").select("value").eq("key", CLAVE_ULTIMA_COPIA).maybeSingle(),
     ];
     if (dia) {
       consultas.push(
@@ -55,8 +77,8 @@ export default async function handler(req, res) {
       );
     }
 
-    const [appointments, waitlist, closes, cancelled] = await Promise.all(consultas);
-    for (const r of [appointments, waitlist, closes, cancelled]) {
+    const [appointments, waitlist, closes, ultimaCopia, cancelled] = await Promise.all(consultas);
+    for (const r of [appointments, waitlist, closes, ultimaCopia, cancelled]) {
       if (r && r.error) throw new Error(r.error.message);
     }
 
@@ -68,6 +90,9 @@ export default async function handler(req, res) {
       appointments: appointments.data.map(appointmentOut),
       waitlist: waitlist.data.map(waitlistOut),
       closes: closes.data.map(closeOut),
+      // null significa "no se ha hecho nunca una copia", que es distinto de
+      // "todavía no se sabe". El panel tiene que poder decir las dos cosas.
+      lastBackup: (ultimaCopia.data && ultimaCopia.data.value) || null,
     };
     // Sin el parámetro, la respuesta es exactamente la de siempre: ni un campo
     // más. Quien no pregunta por canceladas no se entera de que existen.

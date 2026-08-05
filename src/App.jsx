@@ -2,7 +2,9 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail } from "lucide-react";
 // El plazo de reserva sale de un único sitio, compartido con el servidor. La
 // página no puede ofrecer un día que `POST /api/appointments` vaya a rechazar.
-import { DIAS_MAX_RESERVA } from "../shared/plazo-reserva.js";
+// `claveDeDia` es el "hoy" de la barbería, en su hora y no en la del móvil: es
+// lo que le pone la fecha al nombre del fichero de la copia.
+import { DIAS_MAX_RESERVA, claveDeDia } from "../shared/plazo-reserva.js";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
@@ -537,6 +539,11 @@ export default function FelixBarberiaApp() {
   // Quien reparta dinero con esto tiene que mirar antes que el panel haya
   // cargado, o daría por sin cerrar un día que sí lo está.
   const [closes, setCloses] = useState([]);
+  // Cuándo se descargó la última copia de seguridad, en ISO, o null si no se
+  // ha hecho ninguna. Llega con el resto de la carga del panel. Aquí `null`
+  // significa las dos cosas —"nunca" y "todavía no ha llegado"— y quien lo
+  // pinta mira antes `dataLoaded`, como todo lo demás.
+  const [lastBackup, setLastBackup] = useState(null);
   const [schedule, setScheduleState] = useState(EMPTY_SCHEDULE);
   // Reservas temporales vivas: las horas que alguien está rellenando ahora
   // mismo. Se restan de la disponibilidad, igual que una cita.
@@ -653,6 +660,7 @@ export default function FelixBarberiaApp() {
       setAdminAppointments(d.appointments);
       setWaitlistState(d.waitlist);
       setCloses(d.closes || []);
+      setLastBackup(d.lastBackup || null);
       return d.appointments;
     } catch (e) {
       if (e.status === 401 || e.status === 503) {
@@ -681,6 +689,74 @@ export default function FelixBarberiaApp() {
         setAdminEpoch((n) => n + 1);
       }
       return [];
+    }
+  }
+
+  // La copia de seguridad. Se pide entera al servidor —que es la única forma
+  // de que entren también las canceladas, que el panel no tiene cargadas— y
+  // cae como un fichero en el móvil de Félix.
+  //
+  // El orden importa: primero se consigue el fichero, y SÓLO después se apunta
+  // la fecha. Al revés, una descarga fallida dejaría escrito que hoy hay copia
+  // cuando no la hay, que es justo el aviso que esa fecha existe para dar.
+  //
+  // Devuelve lo que lleva dentro el archivo, para poder enseñárselo: un
+  // fichero del que no se sabe nada no se distingue de uno vacío.
+  async function descargarCopia() {
+    try {
+      const { copia } = await apiGet("/api/admin-data?copia=1", { auth: true });
+      if (!copia || !copia.tables) throw new Error("El servidor no ha mandado la copia.");
+
+      const nombre = `copia-felix-barberia-${claveDeDia()}.json`;
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(copia, null, 2)], { type: "application/json" })
+      );
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = nombre;
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      // Sin prisa por soltarlo: en algunos móviles la descarga todavía está
+      // leyendo el blob cuando el click ya ha vuelto.
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+      // Cuántas personas distintas hay dentro. Se cuenta por teléfono, como
+      // todo lo que agrupa por persona aquí — y las citas que la purga anual
+      // ya vació se quedan fuera: no tienen teléfono, y meterlas juntaría a
+      // todas en un cliente fantasma que no es nadie.
+      const telefonos = new Set();
+      for (const c of copia.tables.appointments || []) {
+        if (c.customer_phone) telefonos.add(c.customer_phone);
+      }
+
+      const resumen = {
+        nombre,
+        citas: (copia.counts && copia.counts.appointments) || 0,
+        clientes: telefonos.size,
+        cierres: (copia.counts && copia.counts.daily_closes) || 0,
+        fechaGuardada: true,
+      };
+
+      // Apuntar la fecha es lo ÚNICO que escribe todo esto, y va por la ruta
+      // de configuración de siempre. Si fallase, la copia ya está en el móvil:
+      // no se pierde, se dice que el recordatorio no se ha podido actualizar.
+      try {
+        await apiSend("/api/admin", "POST", { collection: "lastBackup" }, { auth: true });
+        setLastBackup(new Date().toISOString());
+      } catch {
+        resumen.fechaGuardada = false;
+      }
+
+      return resumen;
+    } catch (e) {
+      // Sesión caducada o clave sin configurar: se vuelve a la pantalla de
+      // clave, igual que en el resto del panel.
+      if (e.status === 401 || e.status === 503) {
+        clearAdminSession();
+        setAdminEpoch((n) => n + 1);
+      }
+      throw e;
     }
   }
 
@@ -869,7 +945,7 @@ export default function FelixBarberiaApp() {
         {view === "privacidad" && <Privacidad />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} closes={closes} saveClose={saveClose} removeClose={removeClose} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} closes={closes} saveClose={saveClose} removeClose={removeClose} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} lastBackup={lastBackup} descargarCopia={descargarCopia} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -2565,7 +2641,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -3200,6 +3276,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "ajustes" && (
             <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <AvisosCard />
+              <CopiaCard lastBackup={lastBackup} descargarCopia={descargarCopia} />
               <ScheduleEditor schedule={schedule} setSchedule={setSchedule} />
               {waitlist.length > 0 && (
                 <div className="card" style={{ borderRadius: 12, padding: 14 }}>
@@ -4118,6 +4195,111 @@ function AvisosCard() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Cuánto puede pasar sin copia antes de que la fecha se ponga en ámbar. Un mes
+// contado en días naturales, como el plazo de reserva: es predecible y no tiene
+// casos raros con meses de 28 o de 31.
+const DIAS_AVISO_COPIA = 30;
+// El ámbar del recordatorio. No es el dorado de la casa a propósito: el dorado
+// es el color de todo lo normal aquí, y algo que quiere llamar la atención no
+// puede ser del mismo color que el resto de la pantalla.
+const AMBAR = "#E8A33D";
+
+// La copia de seguridad de Félix, y el recordatorio de hacerla.
+//
+// El recordatorio es la mitad que importa: una copia que se hizo una vez y
+// nunca más no protege de nada. Por eso la fecha se enseña siempre —también
+// cuando está al día, en gris y pequeña— y sólo cambia de color cuando lleva
+// más de un mes. Sin ventanas emergentes: dar la lata acaba en que se ignora.
+function CopiaCard({ lastBackup, descargarCopia }) {
+  const [ocupado, setOcupado] = useState(false);
+  const [resumen, setResumen] = useState(null);
+  const [error, setError] = useState(null);
+
+  const dias = useMemo(() => {
+    if (!lastBackup) return null;
+    const t = Date.parse(lastBackup);
+    if (Number.isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / 86400000);
+  }, [lastBackup]);
+
+  const vieja = dias !== null && dias > DIAS_AVISO_COPIA;
+
+  function cuando() {
+    if (!lastBackup) return "Todavía no te has bajado ninguna.";
+    const t = Date.parse(lastBackup);
+    if (Number.isNaN(t)) return "Última copia: no se sabe cuándo.";
+    const fecha = new Date(t).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" });
+    if (dias === 0) return `Última copia: hoy, ${fecha}.`;
+    if (dias === 1) return `Última copia: ayer, ${fecha}.`;
+    return `Última copia: ${fecha} · hace ${dias} días.`;
+  }
+
+  async function bajar() {
+    setOcupado(true); setError(null); setResumen(null);
+    try {
+      setResumen(await descargarCopia());
+    } catch (e) {
+      // Callarse aquí sería lo peor que puede pasar: se quedaría creyendo que
+      // tiene una copia que no existe.
+      setError(e.message || "No se ha podido descargar.");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ borderRadius: 12, padding: 14 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+        <Download size={14} /> Copia de seguridad
+      </div>
+
+      <p style={{ fontSize: 12, color: SMOKE, margin: "0 0 10px" }}>
+        Se baja a este móvil un archivo con todo: tus citas —también las canceladas—, la lista
+        de espera, servicios y precios, barberos, horarios, días cerrados y tus cierres de caja.
+      </p>
+
+      <button
+        onClick={bajar}
+        disabled={ocupado}
+        className="gold-btn"
+        style={{ width: "100%", padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: ocupado ? "not-allowed" : "pointer" }}
+      >
+        {ocupado ? "Preparando la copia…" : "Descargar copia"}
+      </button>
+
+      <p style={{ fontSize: 11.5, color: vieja ? AMBAR : SMOKE, margin: "10px 0 0", fontWeight: vieja ? 600 : 400 }}>
+        {cuando()}
+        {vieja && " Hazte una nueva."}
+      </p>
+
+      {resumen && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(201,162,39,0.12)", fontSize: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Listo: {resumen.nombre}</div>
+          <div style={{ color: SMOKE }}>
+            Lleva dentro {resumen.citas} citas, {resumen.clientes} clientes distintos y {resumen.cierres} cierres de caja.
+          </div>
+          {!resumen.fechaGuardada && (
+            <div style={{ color: AMBAR, marginTop: 6 }}>
+              El archivo está bajado, pero no he podido apuntar la fecha. Vuelve a entrar y mira aquí.
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12 }}>
+          No se ha podido descargar la copia: {error}
+        </div>
+      )}
+
+      <p style={{ fontSize: 10.5, color: SMOKE, margin: "10px 0 0" }}>
+        Ojo: el archivo lleva los nombres y los teléfonos de tus clientes. Mándatelo por correo
+        a ti mismo nada más bajarlo, para que no viva sólo en el móvil que puedes perder.
+      </p>
     </div>
   );
 }
