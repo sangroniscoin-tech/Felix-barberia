@@ -385,6 +385,23 @@ async function apiSend(path, method, payload, { auth = false } = {}) {
   return body;
 }
 
+// ---- Dinero ----
+// Redondeo a céntimos. Los precios de la barbería son enteros, pero un cierre
+// admite decimales —un datáfono los da— y sumar 10,10 y 10,20 en coma flotante
+// da 20,299999999999997. Una cifra así en la pantalla de la caja se lee como
+// una avería, y con razón.
+function r2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+// Cómo se escribe un importe: sin decimales si no los tiene —que es todo lo
+// que hay hoy, y así ninguna cifra existente cambia de aspecto— y con coma
+// decimal cuando los tiene, que es como se escribe en castellano.
+function fmtEur(n) {
+  const v = r2(n);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(".", ",");
+}
+
 // ---- Saneado en el navegador ----
 // Es comodidad para quien escribe, no una garantía: el servidor vuelve a
 // validarlo todo, porque esto se puede saltar.
@@ -515,6 +532,11 @@ export default function FelixBarberiaApp() {
   // carga pública: las trae /api/admin-data cuando Félix entra en su panel.
   const [waitlist, setWaitlistState] = useState([]);
   const [adminAppointments, setAdminAppointments] = useState([]);
+  // Los cierres de caja, uno por día cerrado. Vacío no significa "ningún día
+  // cerrado": significa "todavía no se sabe", igual que todo lo de arriba.
+  // Quien reparta dinero con esto tiene que mirar antes que el panel haya
+  // cargado, o daría por sin cerrar un día que sí lo está.
+  const [closes, setCloses] = useState([]);
   const [schedule, setScheduleState] = useState(EMPTY_SCHEDULE);
   // Reservas temporales vivas: las horas que alguien está rellenando ahora
   // mismo. Se restan de la disponibilidad, igual que una cita.
@@ -630,6 +652,7 @@ export default function FelixBarberiaApp() {
       const d = await apiGet("/api/admin-data", { auth: true });
       setAdminAppointments(d.appointments);
       setWaitlistState(d.waitlist);
+      setCloses(d.closes || []);
       return d.appointments;
     } catch (e) {
       if (e.status === 401 || e.status === 503) {
@@ -714,6 +737,22 @@ export default function FelixBarberiaApp() {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
     const body = await apiSend("/api/cobro", "PATCH", groupId ? { groupId, metodo } : { id, metodo }, { auth: true });
     return body.appointment || (body.appointments || []).find((a) => a.id === id) || null;
+  }
+
+  // Cerrar la caja de un día: lo que marcó el datáfono y lo que entró por
+  // Bizum. El efectivo NO se manda —es el resto del total del día— y el total
+  // tampoco: lo calcula el servidor con las citas de verdad.
+  //
+  // Ninguna de las dos se traga los errores: si el cierre no se guarda, quien
+  // llama lo cuenta. Un cierre pintado como guardado sin estarlo es dinero mal
+  // cuadrado que nadie va a poder encontrar después.
+  async function saveClose(dateKey, tarjeta, bizum) {
+    const body = await apiSend("/api/cierre", "PUT", { dateKey, tarjeta, bizum }, { auth: true });
+    return body.close;
+  }
+
+  async function removeClose(dateKey) {
+    await apiSend("/api/cierre", "DELETE", { dateKey }, { auth: true });
   }
 
   // Las reservas temporales recién leídas, para poder consultarlas justo
@@ -830,7 +869,7 @@ export default function FelixBarberiaApp() {
         {view === "privacidad" && <Privacidad />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} closes={closes} saveClose={saveClose} removeClose={removeClose} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -2526,7 +2565,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2680,7 +2719,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // `total` es la suma exacta de las cuatro de abajo. Si dejaran de cuadrar,
   // la pantalla estaría mintiendo en la única cifra con la que se cuadra la
   // caja al cerrar.
-  function breakdown(list) {
+  function marksBreakdown(list) {
     const out = { total: 0, efectivo: 0, tarjeta: 0, bizum: 0, sinMarcar: 0 };
     for (const a of list) {
       if (a.noShow || !hasPassed(a)) continue;
@@ -2696,12 +2735,81 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     return out;
   }
 
+  // El cierre de un día, buscado por su fecha. Un día que no está aquí está
+  // SIN CERRAR, que no es lo mismo que "todo en efectivo": es justo lo que
+  // `ADR.md` prohíbe dar por supuesto de un hueco que nadie ha rellenado.
+  const closeByDate = useMemo(() => {
+    const m = {};
+    for (const c of closes || []) m[c.dateKey] = c;
+    return m;
+  }, [closes]);
+
+  // El reparto de UN día, ya decidido. Con cierre manda el cierre: tarjeta y
+  // Bizum son los que Félix escribió, el efectivo es lo que queda del total y
+  // "sin marcar" vale 0 — el día entero tiene quien responda por él. Sin
+  // cierre se calcula exactamente como siempre, con las marcas de cada cita.
+  //
+  // Nunca las dos cosas a la vez para el mismo día: ahí es donde estaría el
+  // doble conteo, sumando lo declarado encima de lo ya marcado.
+  //
+  // Si después de cerrar se marca a alguien como ausente, el total del día
+  // baja y puede quedarse por debajo de lo escrito. Entonces el efectivo no se
+  // enseña en negativo —una cifra imposible se lee como una avería— sino en 0,
+  // y el día se marca `revisar` para que se vea que ese cierre hay que
+  // repasarlo. Es la única situación en la que las cuatro cifras no suman el
+  // total, y por eso se avisa en vez de disimularla.
+  function dayBreakdown(dk, list) {
+    const marcas = marksBreakdown(list);
+    const cierre = closeByDate[dk];
+    if (!cierre) return { ...marcas, cerrado: false, revisar: false };
+    const declarado = r2(cierre.card + cierre.bizum);
+    const revisar = declarado > marcas.total + 0.005;
+    return {
+      total: marcas.total,
+      tarjeta: cierre.card,
+      bizum: cierre.bizum,
+      efectivo: revisar ? 0 : r2(marcas.total - declarado),
+      sinMarcar: 0,
+      cerrado: true,
+      revisar,
+    };
+  }
+
+  // Una semana o un mes se compone DÍA A DÍA y luego se suma: cada día aporta
+  // su reparto, por su cierre o por sus marcas. Sumar primero todas las citas
+  // del periodo y mirar los cierres después mezclaría los dos criterios dentro
+  // de la misma cifra.
+  //
+  // `sinCerrar` cuenta los días del periodo con dinero cobrado y sin cierre.
+  // Sin ese número, las cifras del periodo parecen completas cuando lo que
+  // pasa es que faltan días por confirmar. Un día sin citas cobradas no cuenta:
+  // no hay nada que cerrar en él, y contarlo sería una tarea inventada.
+  function periodBreakdown(list) {
+    const byDay = {};
+    for (const a of list) (byDay[a.dateKey] = byDay[a.dateKey] || []).push(a);
+    const out = { total: 0, efectivo: 0, tarjeta: 0, bizum: 0, sinMarcar: 0, sinCerrar: 0, revisar: 0 };
+    for (const dk of Object.keys(byDay)) {
+      const d = dayBreakdown(dk, byDay[dk]);
+      out.total += d.total;
+      out.efectivo += d.efectivo;
+      out.tarjeta += d.tarjeta;
+      out.bizum += d.bizum;
+      out.sinMarcar += d.sinMarcar;
+      if (d.total > 0 && !d.cerrado) out.sinCerrar += 1;
+      if (d.revisar) out.revisar += 1;
+    }
+    for (const k of ["total", "efectivo", "tarjeta", "bizum", "sinMarcar"]) out[k] = r2(out[k]);
+    return out;
+  }
+
   // `now` entra en las dependencias a propósito: es lo que mueve la frontera
   // entre pasado y futuro, así que las cifras se recalculan solas al pasar la
-  // hora de una cita, sin que Félix recargue nada.
-  const dayMoney = useMemo(() => breakdown(apptsForDate(cursorDate)), [appointments, cursorDate, services, now]);
-  const weekMoney = useMemo(() => breakdown(weekAppts), [weekAppts, services, now]);
-  const monthMoney = useMemo(() => breakdown(monthAppts), [monthAppts, services, now]);
+  // hora de una cita, sin que Félix recargue nada. `closes` entra por lo mismo:
+  // guardar o deshacer un cierre recoloca el reparto sin recargar el panel.
+  const dayMarks = useMemo(() => marksBreakdown(apptsForDate(cursorDate)), [appointments, cursorDate, services, now]);
+  const dayMoney = useMemo(() => dayBreakdown(dateKey(cursorDate), apptsForDate(cursorDate)), [appointments, cursorDate, services, now, closeByDate]);
+  const weekMoney = useMemo(() => periodBreakdown(weekAppts), [weekAppts, services, now, closeByDate]);
+  const monthMoney = useMemo(() => periodBreakdown(monthAppts), [monthAppts, services, now, closeByDate]);
 
   // El recuento de citas, partido en las que ya se han hecho y las que faltan
   // por venir. Pegado al recuadro del dinero, un número que subía en cuanto
@@ -2972,6 +3080,28 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               {dataLoaded && dayIsPast && (
                 <MoneyBlock m={dayMoney} totalLabel={dateKey(cursorDate) === dateKey(new Date()) ? "Cobrado hoy" : "Cobrado ese día"} />
               )}
+              {/* El cierre de la caja, debajo del dinero del día y sólo en un
+                  día que ya ha llegado — la misma condición que decide si se
+                  enseña el dinero. Un día sin nada cobrado no ofrece cerrar
+                  nada: no habría importe que repartir.
+
+                  `key` con la fecha dentro a propósito: al cambiar de día el
+                  bloque se vuelve a montar, y así las casillas se rellenan con
+                  lo de ESE día en vez de arrastrar lo que hubiera tecleado en
+                  el anterior. */}
+              {dataLoaded && dayIsPast && (dayMoney.total > 0 || closeByDate[dateKey(cursorDate)]) && (
+                <CierreCaja
+                  key={dateKey(cursorDate)}
+                  dateKey={dateKey(cursorDate)}
+                  total={dayMoney.total}
+                  cierre={closeByDate[dateKey(cursorDate)] || null}
+                  marcas={dayMarks}
+                  revisar={dayMoney.revisar}
+                  onSave={saveClose}
+                  onRemove={removeClose}
+                  onDone={refreshAppointments}
+                />
+              )}
               {/* Sin servicios no se puede apuntar una cita: la ventana arranca
                   eligiendo el primero de la lista. Antes esa lista nunca estaba
                   vacía porque el código traía tres servicios inventados; ahora
@@ -2986,13 +3116,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -7))} onNext={() => setCursorDate(addDays(cursorDate, 7))} label={`Semana del ${weekDays[0].getDate()} ${MESES[weekDays[0].getMonth()]}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
                 <StatCard label="Citas hechas esta semana" value={weekCounts.hechas} sub={weekCounts.porVenir > 0 ? `${weekCounts.porVenir} por venir` : null} />
-                <StatCard label="Cobrado esta semana" value={`${weekMoney.total}€`} />
+                <StatCard label="Cobrado esta semana" value={`${fmtEur(weekMoney.total)}€`} />
                 {/* Un cero se enseña, no se esconde: significa que esta semana
                     vinieron todos, y un recuadro que aparece y desaparece
                     movería de sitio el resto de la pantalla. */}
-                <StatCard label="Perdido por ausencias" value={`${weekLost}€`} tone="perdida" wide />
+                <StatCard label="Perdido por ausencias" value={`${fmtEur(weekLost)}€`} tone="perdida" wide />
               </div>
-              <MoneyBlock m={weekMoney} />
+              <MoneyBlock m={weekMoney} nota={notaSinCerrar(weekMoney)} />
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 {weekDays.map((d) => (
                   <div key={dateKey(d)} className="card" style={{ borderRadius: 12, padding: 12 }}>
@@ -3022,11 +3152,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -30))} onNext={() => setCursorDate(addDays(cursorDate, 30))} label={`${MESES[cursorDate.getMonth()][0].toUpperCase() + MESES[cursorDate.getMonth()].slice(1)} ${cursorDate.getFullYear()}`} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 16, marginBottom: 10 }}>
-                <StatCard label="Cobrado este mes" value={`${monthMoney.total}€`} />
+                <StatCard label="Cobrado este mes" value={`${fmtEur(monthMoney.total)}€`} />
                 <StatCard label="Citas hechas este mes" value={monthCounts.hechas} sub={monthCounts.porVenir > 0 ? `${monthCounts.porVenir} por venir` : null} />
-                <StatCard label="Perdido por ausencias" value={`${monthLost}€`} tone="perdida" wide />
+                <StatCard label="Perdido por ausencias" value={`${fmtEur(monthLost)}€`} tone="perdida" wide />
               </div>
-              <MoneyBlock m={monthMoney} />
+              <MoneyBlock m={monthMoney} nota={notaSinCerrar(monthMoney)} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 20 }}>
                 <StatCard label="Clientes nuevos" value={stats.nuevos} />
                 <StatCard label="Habituales" value={stats.habituales} />
@@ -3640,14 +3770,192 @@ function LoadingRegion({ label, children, style, className }) {
 //
 // `totalLabel` sólo lo usa la pantalla del día, que no tiene ningún recuadro
 // de total propio; la semana y el mes ya traen el suyo encima.
-function MoneyBlock({ m, totalLabel }) {
+//
+// En un día cerrado, "sin marcar" vale 0 y el efectivo es una resta: los
+// recuadros son los mismos y no hace falta una segunda pantalla para leer un
+// día cerrado. Lo que cambia es de dónde salen las cifras, y eso lo dice el
+// bloque de cierre que va justo debajo.
+//
+// `nota` es una línea discreta bajo los recuadros: en la semana y el mes dice
+// cuántos días quedan sin cerrar. Sin ella, unas cifras a las que les faltan
+// días se leen como completas.
+function MoneyBlock({ m, totalLabel, nota }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
-      {totalLabel && <StatCard label={totalLabel} value={`${m.total}€`} wide />}
-      <StatCard label="Efectivo" value={`${m.efectivo}€`} />
-      <StatCard label="Tarjeta" value={`${m.tarjeta}€`} />
-      <StatCard label="Bizum" value={`${m.bizum}€`} />
-      <StatCard label="Sin marcar" value={`${m.sinMarcar}€`} tone="apagada" />
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
+        {totalLabel && <StatCard label={totalLabel} value={`${fmtEur(m.total)}€`} wide />}
+        <StatCard label="Efectivo" value={`${fmtEur(m.efectivo)}€`} sub={m.cerrado ? "del cierre" : null} />
+        <StatCard label="Tarjeta" value={`${fmtEur(m.tarjeta)}€`} />
+        <StatCard label="Bizum" value={`${fmtEur(m.bizum)}€`} />
+        <StatCard label="Sin marcar" value={`${fmtEur(m.sinMarcar)}€`} tone="apagada" />
+      </div>
+      {nota && <div style={{ fontSize: 11.5, color: SMOKE, marginTop: 6, marginBottom: 4 }}>{nota}</div>}
+    </>
+  );
+}
+
+// La línea de los días sin cerrar de un periodo. Devuelve null cuando no falta
+// ninguno: un "0 días sin cerrar" fijo es ruido, y su ausencia ya dice que
+// está todo cerrado.
+function notaSinCerrar(m) {
+  const partes = [];
+  if (m.sinCerrar > 0) {
+    partes.push(m.sinCerrar === 1 ? "Queda 1 día sin cerrar" : `Quedan ${m.sinCerrar} días sin cerrar`);
+  }
+  if (m.revisar > 0) {
+    partes.push(m.revisar === 1 ? "1 cierre a repasar" : `${m.revisar} cierres a repasar`);
+  }
+  return partes.length > 0 ? `${partes.join(" · ")}.` : null;
+}
+
+// Lee un importe escrito a mano. Devuelve null si no es un importe: es lo que
+// distingue "todavía no ha escrito nada válido" de un cero. La coma decimal
+// vale igual que el punto, porque es la que trae el teclado en castellano.
+//
+// Vacío es cero: dejar la casilla de Bizum en blanco quiere decir que ese día
+// no entró nada por Bizum, no que falte por rellenar.
+function leerImporte(v) {
+  const s = String(v ?? "").trim().replace(",", ".");
+  if (s === "") return 0;
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  return Number(s);
+}
+
+// El cierre de caja del día: Félix escribe lo que marca el datáfono y lo que
+// le entró por Bizum, y el efectivo sale de restar. Así no tiene que ir
+// marcando cliente por cliente, que es lo que pidió y lo que no hacía.
+//
+// Las casillas vienen rellenas: con el cierre si el día ya está cerrado, y si
+// no con lo que suman las citas que él sí marcó a mano. Cerrar un día ya
+// trabajado es entonces confirmar y no volver a teclear.
+//
+// Esto valida en el navegador por comodidad; la validación de verdad está en
+// el servidor, que además calcula el total del día por su cuenta. Y si el
+// guardado falla se dice: un cierre pintado como guardado sin estarlo es
+// dinero descuadrado que nadie va a encontrar después.
+function CierreCaja({ dateKey, total, cierre, marcas, revisar, onSave, onRemove, onDone }) {
+  const inicial = (n) => (n ? String(fmtEur(n)) : "");
+  const [tarjeta, setTarjeta] = useState(() => inicial(cierre ? cierre.card : marcas.tarjeta));
+  const [bizum, setBizum] = useState(() => inicial(cierre ? cierre.bizum : marcas.bizum));
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState(null);
+  const [guardado, setGuardado] = useState(false);
+
+  const t = leerImporte(tarjeta);
+  const b = leerImporte(bizum);
+  const malEscrito = t === null || b === null;
+  // El efectivo, en vivo, mientras teclea: es la cifra que le dice si se está
+  // pasando antes de darle a guardar.
+  const efectivo = malEscrito ? null : r2(total - t - b);
+  const sePasa = efectivo !== null && efectivo < 0;
+
+  async function guardar() {
+    if (malEscrito || sePasa || guardando) return;
+    setGuardando(true);
+    setError(null);
+    try {
+      await onSave(dateKey, t, b);
+      await onDone();
+      setGuardado(true);
+      setTimeout(() => setGuardado(false), 2500);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function deshacer() {
+    if (guardando) return;
+    setGuardando(true);
+    setError(null);
+    try {
+      await onRemove(dateKey);
+      await onDone();
+      // El día vuelve a estar sin cerrar, así que las casillas vuelven a lo
+      // que suman las marcas de cada cita: lo mismo que vería si entrara ahora.
+      setTarjeta(inicial(marcas.tarjeta));
+      setBizum(inicial(marcas.bizum));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ borderRadius: 12, padding: 14, marginTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD }}>Cierre de caja</div>
+        <div style={{ fontSize: 11, color: cierre ? GOLD : SMOKE }}>{cierre ? "Cerrado" : "Sin cerrar"}</div>
+      </div>
+      <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 10 }}>
+        Total del día: <strong style={{ color: BONE }}>{fmtEur(total)}€</strong>. Escribe lo que pasó por tarjeta y por Bizum; el efectivo es lo que queda.
+      </div>
+
+      {revisar && (
+        <div style={{ fontSize: 11.5, color: "#e0a0a0", marginBottom: 10 }}>
+          Este cierre suma más que el total del día — pasó al marcar a alguien como ausente. Vuelve a escribir los importes o deshaz el cierre.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label style={{ fontSize: 11, color: SMOKE }}>
+          Tarjeta
+          <input
+            value={tarjeta}
+            onChange={(e) => { setTarjeta(e.target.value); setError(null); }}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ ...inputStyle, marginTop: 4, textAlign: "right" }}
+          />
+        </label>
+        <label style={{ fontSize: 11, color: SMOKE }}>
+          Bizum
+          <input
+            value={bizum}
+            onChange={(e) => { setBizum(e.target.value); setError(null); }}
+            inputMode="decimal"
+            placeholder="0"
+            style={{ ...inputStyle, marginTop: 4, textAlign: "right" }}
+          />
+        </label>
+      </div>
+
+      <div style={{ fontSize: 12.5, marginTop: 10, color: sePasa || malEscrito ? "#e0a0a0" : BONE }}>
+        {malEscrito
+          ? "Escribe sólo números, con dos decimales como mucho (20,50)."
+          : sePasa
+            ? `Tarjeta y Bizum suman ${fmtEur(t + b)}€, más que el total del día. Repasa los importes.`
+            : <>Efectivo: <strong style={{ color: GOLD }}>{fmtEur(efectivo)}€</strong></>}
+      </div>
+
+      {error && <div style={{ fontSize: 11.5, color: "#e0a0a0", marginTop: 8 }}>No se ha podido guardar: {error}</div>}
+      {guardado && <div style={{ fontSize: 11.5, color: GOLD, marginTop: 8 }}>Cierre guardado ✓</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          onClick={guardar}
+          disabled={guardando || malEscrito || sePasa}
+          style={{
+            flex: 1, padding: "10px 14px", borderRadius: 10, border: "none", fontSize: 13, fontWeight: 600,
+            background: guardando || malEscrito || sePasa ? "rgba(255,255,255,0.12)" : GOLD,
+            color: guardando || malEscrito || sePasa ? SMOKE : "#0B0B0A",
+            cursor: guardando || malEscrito || sePasa ? "default" : "pointer",
+          }}
+        >
+          {guardando ? "Guardando…" : cierre ? "Corregir cierre" : "Cerrar el día"}
+        </button>
+        {cierre && (
+          <button
+            onClick={deshacer}
+            disabled={guardando}
+            style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "none", color: SMOKE, fontSize: 12.5, cursor: guardando ? "default" : "pointer" }}
+          >
+            Deshacer
+          </button>
+        )}
+      </div>
     </div>
   );
 }
