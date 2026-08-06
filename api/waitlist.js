@@ -12,6 +12,7 @@
 // Toda la validación se hace AQUÍ, aunque el navegador ya haya validado.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { cleanName, cleanPhone, isValidPhone, isValidDateKey } from "./_lib/shape.js";
+import { normalizarFranja } from "../shared/franja-horaria.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -42,6 +43,16 @@ export default async function handler(req, res) {
   const dateKey = body.dateKey == null || body.dateKey === "" ? null : body.dateKey;
   if (dateKey !== null && !isValidDateKey(dateKey)) return bad(res, "Ese día no es válido.", "dateKey");
 
+  // Cuándo puede venir. Los dos son OPCIONALES y ninguno de los dos puede
+  // tumbar una inscripción: quien no conteste se apunta igual, que es lo que
+  // se acordó. Por eso una franja que no sea una de las tres se guarda como
+  // `null` —"no lo dijo"— en vez de devolver un 400. Un formulario más largo
+  // que rechaza gente es peor que un dato menos.
+  const preferredSlot = normalizarFranja(body.preferredSlot);
+  // A booleano de verdad: "false", 0 o un objeto no pueden acabar en una
+  // columna `not null` de Postgres.
+  const anyDate = body.anyDate === true || body.anyDate === "true";
+
   try {
     // El servicio se comprueba contra la tabla, igual que al crear una cita:
     // no se acepta cualquier cadena que mande el navegador.
@@ -58,6 +69,14 @@ export default async function handler(req, res) {
       customer_phone: phone,
       service_id: serviceId,
       preferred_date: dateKey,
+      // `preferred_date` y `any_date` conviven: se puede marcar "cualquier
+      // día" estando mirando el jueves, y entonces se guardan los dos. El día
+      // sigue diciendo por dónde entró, que es información real.
+      preferred_slot: preferredSlot,
+      any_date: anyDate,
+      // El recorte a 280 ya estaba aquí antes de que el formulario público
+      // mandase nota. Una nota larguísima se recorta y se guarda; no es un
+      // error.
       note: typeof body.note === "string" ? body.note.trim().slice(0, 280) : "",
     });
     if (error) throw new Error(error.message);

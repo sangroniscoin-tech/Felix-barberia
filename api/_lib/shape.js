@@ -145,8 +145,24 @@ export function holdOut(r) {
   };
 }
 
+// Una entrada de la lista de espera, como la ve el panel. Sale SÓLO por
+// admin-data, detrás de la clave: lleva nombre y teléfono.
+//
+// `preferredSlot` va SIEMPRE, incluso en `null`, porque `null` es un valor con
+// significado —"no lo dijo"— y el panel lo pinta como tal. Si faltase, el panel
+// no podría distinguir "no lo dijo" de "me da igual", que es justo lo que las
+// siete entradas anteriores a #75 necesitan que se distinga.
 export function waitlistOut(r) {
-  return { id: String(r.id), name: r.customer_name, phone: r.customer_phone, service: r.service_id, dateKey: r.preferred_date, note: r.note };
+  return {
+    id: String(r.id),
+    name: r.customer_name,
+    phone: r.customer_phone,
+    service: r.service_id,
+    dateKey: r.preferred_date,
+    note: r.note,
+    preferredSlot: r.preferred_slot ?? null,
+    anyDate: r.any_date === true,
+  };
 }
 
 // ---- Saneado y validación de lo que llega de un formulario ----

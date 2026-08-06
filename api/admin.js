@@ -14,6 +14,7 @@ import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { cleanName, cleanPhone, isValidPhone } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
+import { normalizarFranja } from "../shared/franja-horaria.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -112,7 +113,14 @@ export default async function handler(req, res) {
             customer_phone: cleanPhone(w.phone),
             service_id: w.service || null,
             preferred_date: w.dateKey || null,
-            note: w.note || "",
+            // Esta colección se guarda ENTERA: se borra la tabla y se vuelve a
+            // escribir. Si estos dos campos no viajasen de vuelta, quitar a una
+            // persona de la lista con la X borraría la franja de TODAS las
+            // demás. Cualquier columna nueva de `waitlist` tiene que entrar
+            // aquí el mismo día que se añade.
+            preferred_slot: normalizarFranja(w.preferredSlot),
+            any_date: w.anyDate === true,
+            note: typeof w.note === "string" ? w.note.trim().slice(0, 280) : "",
           }))
           .filter((w) => w.customer_name && isValidPhone(w.customer_phone));
         if (rows.length) await insert(supabase, "waitlist", rows);
