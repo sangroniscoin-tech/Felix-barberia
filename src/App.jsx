@@ -5,6 +5,9 @@ import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronL
 // `claveDeDia` es el "hoy" de la barbería, en su hora y no en la del móvil: es
 // lo que le pone la fecha al nombre del fichero de la copia.
 import { DIAS_MAX_RESERVA, claveDeDia } from "../shared/plazo-reserva.js";
+// La raya entre mañana y tarde no es un número escrito aquí: sale del horario
+// que Félix tiene puesto, y del mismo sitio que lo leerá el servidor.
+import { corteDeMediodia } from "../shared/franja-horaria.js";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
@@ -643,6 +646,11 @@ export default function FelixBarberiaApp() {
       phone: entry.phone,
       service: entry.service,
       dateKey: entry.dateKey,
+      // Cuándo puede venir. Los tres son opcionales: quien no toque nada manda
+      // null, false y "", y se apunta igual. El servidor vuelve a validarlos.
+      preferredSlot: entry.preferredSlot,
+      anyDate: entry.anyDate,
+      note: entry.note,
     });
     setWaitlistState((prev) => [...prev, entry]);
   }
@@ -2071,6 +2079,10 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
                   service={service}
                   barberId={barberId}
                   joinWaitlist={joinWaitlist}
+                  // Los tramos de ESE día, tal y como los tiene el horario. De
+                  // aquí sale la raya de mediodía; si el día no cierra a
+                  // mediodía, no hay raya y no se inventa ninguna.
+                  dayBlocks={schedule[selectedDate.getDay()] || []}
                 />
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
@@ -2291,12 +2303,34 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   );
 }
 
-function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist }) {
+// El texto de las tres franjas. `null` no está aquí: `null` es no haber
+// contestado, y no se pinta como una opción elegida.
+const FRANJA_LABEL = { manana: "Mañana", tarde: "Tarde", cualquiera: "Me da igual" };
+
+// Lo mismo, dicho para quien lee la lista en el panel en vez de para quien la
+// rellena. Aquí importa a quién se puede llamar y a qué hora.
+const FRANJA_PANEL = {
+  manana: "Puede por la mañana",
+  tarde: "Puede por la tarde",
+  cualquiera: "Le da igual la hora",
+};
+
+function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist, dayBlocks }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  // Los tres campos nuevos arrancan sin contestar: null es "no lo dijo", que es
+  // lo que se guarda si el cliente no toca nada. No se elige uno por él.
+  const [slot, setSlot] = useState(null);
+  const [anyDate, setAnyDate] = useState(false);
+  const [note, setNote] = useState("");
   const [done, setDone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // La raya de ese día, o null si ese día no cierra a mediodía. Sólo sirve
+  // para poner la hora de verdad debajo de "Mañana" y "Tarde": sin cierre de
+  // mediodía las tres opciones siguen ahí, pero sin una hora inventada.
+  const corte = useMemo(() => corteDeMediodia(dayBlocks), [dayBlocks]);
 
   async function join() {
     if (saving) return;
@@ -2310,6 +2344,9 @@ function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist 
         barberId,
         name,
         phone,
+        preferredSlot: slot,
+        anyDate,
+        note: note.trim().slice(0, 280),
         createdAt: Date.now(),
       });
       setDone(true);
@@ -2326,7 +2363,12 @@ function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist 
     return (
       <div className="card" style={{ padding: 16, borderRadius: 12, fontSize: 13, textAlign: "center" }}>
         <Check size={18} color={GOLD} style={{ marginBottom: 6 }} />
-        <div>¡Apuntado! Te avisaremos si se libera un hueco el {dateLabel}.</div>
+        {/* Lo que va a pasar de verdad: no hay ningún aviso automático, lo
+            manda una persona. Antes decía "te avisaremos", que sonaba a un
+            mensaje que el sistema no envía ni va a enviar. */}
+        <div>
+          ¡Apuntado! Si se libera un hueco {anyDate ? "que te encaje" : `el ${dateLabel}`}, la barbería te escribe o te llama.
+        </div>
       </div>
     );
   }
@@ -2334,12 +2376,52 @@ function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist 
   return (
     <div className="card" style={{ padding: 16, borderRadius: 12 }}>
       <div style={{ fontSize: 13, color: SMOKE, marginBottom: 10 }}>
-        No quedan huecos disponibles este día para este servicio. Puedes apuntarte a la lista de espera y te avisamos si se libera algo.
+        No quedan huecos disponibles este día para este servicio. Puedes apuntarte a la lista de espera:
+        si se libera algo, la barbería te escribe o te llama.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <input value={name} onChange={(e) => setName(sanitizeName(e.target.value))} placeholder="Tu nombre" style={inputStyle} />
         <input value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} inputMode="tel" placeholder="Tu teléfono" style={inputStyle} />
         {phone && !isPhoneValid(phone) && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>Al menos 9 dígitos.</span>}
+
+        {/* Todo lo que viene a partir de aquí es OPCIONAL: sirve para que no le
+            llamen por un hueco al que no puede ir. Quien no toque nada se
+            apunta igual, y el botón de abajo no lo mira. */}
+        <div style={{ fontSize: 12, color: SMOKE, marginTop: 4 }}>¿A qué hora te vendría bien? <span style={{ opacity: 0.7 }}>(opcional)</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+          {["manana", "tarde", "cualquiera"].map((f) => {
+            const activa = slot === f;
+            // La hora sale del horario de ese día. Si ese día no cierra a
+            // mediodía no hay raya que enseñar, y debajo no pone nada.
+            const pista = f === "manana" && corte ? `hasta ${corte.finManana}`
+              : f === "tarde" && corte ? `desde ${corte.inicioTarde}`
+              : null;
+            return (
+              // Volver a tocar la que ya está elegida la desmarca: quien la
+              // pulsa por error puede volver a "no lo dijo" sin recargar.
+              <button key={f} type="button" onClick={() => setSlot(activa ? null : f)} style={{
+                padding: "8px 4px", borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: "pointer", lineHeight: 1.25,
+                border: activa ? `1px solid ${GOLD}` : "1px solid rgba(255,255,255,0.15)",
+                background: activa ? GOLD : "#161513", color: activa ? "#111111" : BONE,
+              }}>
+                {FRANJA_LABEL[f]}
+                {pista && <div style={{ fontSize: 10, fontWeight: 500, opacity: 0.75 }}>{pista}</div>}
+              </button>
+            );
+          })}
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: BONE, cursor: "pointer", marginTop: 2 }}>
+          <input type="checkbox" checked={anyDate} onChange={(e) => setAnyDate(e.target.checked)} style={{ accentColor: GOLD, width: 16, height: 16 }} />
+          Me vale cualquier día, no sólo el {dateLabel}
+        </label>
+
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value.slice(0, 280))}
+          placeholder="Algo más que debamos saber (opcional): «a partir de las 6»"
+          style={inputStyle}
+        />
         {error && <span style={{ color: "#f2a6a6", fontSize: 11.5 }}>{error}</span>}
         <button onClick={join} disabled={!name.trim() || !isPhoneValid(phone) || saving} className="gold-btn" style={{ padding: 11, borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: name.trim() && isPhoneValid(phone) && !saving ? "pointer" : "not-allowed", opacity: name.trim() && isPhoneValid(phone) && !saving ? 1 : 0.5 }}>
           {saving ? "Apuntando…" : "Unirme a la lista de espera"}
@@ -3286,8 +3368,23 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                     return (
                       <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600 }}>{w.name} · {w.dateKey}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>
+                            {w.name} · {w.dateKey || "sin día"}
+                            {/* Quien marcó "cualquier día" se distingue de quien
+                                pidió un día concreto: a uno se le puede ofrecer
+                                cualquier hueco y al otro no. El día sigue ahí
+                                porque dice por dónde entró. */}
+                            {w.anyDate && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: "1px 5px" }}>cualquier día</span>}
+                          </div>
                           <div style={{ fontSize: 11, color: SMOKE }}>{svc?.name} · {w.phone}</div>
+                          {/* La franja, y "no lo dijo" cuando no hay ninguna.
+                              Los que se apuntaron antes de que se preguntase
+                              están en ese caso, y no es lo mismo que "me da
+                              igual": ésos sí lo dijeron. */}
+                          <div style={{ fontSize: 11, color: w.preferredSlot ? BONE : SMOKE, marginTop: 2 }}>
+                            {w.preferredSlot ? FRANJA_PANEL[w.preferredSlot] : <em style={{ opacity: 0.75 }}>No dijo a qué hora puede</em>}
+                          </div>
+                          {w.note && <div style={{ fontSize: 11, color: SMOKE, marginTop: 2, fontStyle: "italic" }}>«{w.note}»</div>}
                         </div>
                         <a href={`tel:${w.phone.replace(/\s/g, "")}`} className="ghost-btn" style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, textDecoration: "none", color: BONE }}>Llamar</a>
                         <button onClick={() => removeWaitlistEntry(w.id)} style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer" }}><X size={14} /></button>
