@@ -63,6 +63,16 @@ acceptance criteria on every change from here on:
   service, because it lands on a lock screen; tapping it opens the panel on that day with
   that person's card, which is where the name and the phone live. A cancellation shows him
   who cancelled, so he can ring them back.
+- **Quien se apunta a la lista de espera dice cuándo puede**: la franja —mañana, tarde o le
+  da igual—, si le vale cualquier día y una nota corta. Nada es obligatorio, y los que se
+  apuntaron antes de que existiera la pregunta salen como «no lo dijo», que no es lo mismo
+  que «me da igual». La raya entre mañana y tarde es el cierre de mediodía de su horario.
+- **Cuando se cancela una cita, la lista de espera se le pone delante.** El aviso del móvil
+  dice a cuántos puede llamar y lleva al panel, a ese día: primero los que encajan por día
+  y franja, luego los que dan igual, y abajo, marcados, los que no encajan — se ordena, no
+  se esconde a nadie. Cada uno con el WhatsApp ya escrito y el botón de llamar. **Avisa él,
+  no el sistema**, y quien recibe el aviso queda marcado pero **no sale de la lista**: si no
+  contesta, vuelve a salirle en el siguiente hueco.
 - Everything is in Spanish, for customers in Zaragoza. It is installable as a phone app
   (PWA) and is used mostly on phones.
 - Services and prices live in the data store, not the code, and Félix can change them
@@ -91,9 +101,12 @@ acceptance criteria on every change from here on:
   downloads and forwards by hand: sending it anywhere on its own means another service and
   another credential, and restoring is a rare, dangerous operation done with someone
   watching, not with a button. Both were offered as scope and deliberately left out.
-- **No install-the-app banner.** The site is already installable and he has a QR poster;
-  a prompt at the door interrupts the one thing a customer came to do. He was told plainly
-  that an icon buys them nothing here — there are no customer notifications and nothing is
-  cached offline on purpose — and it was parked, not refused.
+- **No install-the-app banner.** Already installable, and he has a QR poster; a prompt at
+  the door interrupts the one thing a customer came to do. Parked, not refused.
+- **No automatic message to the customer when a hueco frees up**, declined 2026-08-07: an
+  SMS or WhatsApp Business provider means a monthly bill, another account, templates Meta
+  has to approve, and asking the customer's permission to write to them. He chose to send
+  it himself with one tap. **Nor is the freed hueco held** for whoever is waiting — it goes
+  back on the web and the first to book gets it; to keep it he blocks that stretch himself.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.
