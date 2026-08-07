@@ -47,11 +47,14 @@ acceptance criteria on every change from here on:
   Un día que no cierra se ve como **"sin cerrar"**, nunca como efectivo, y la semana y el
   mes le dicen cuántos le quedan. Un día cerrado deja de saber qué cliente pagó con qué —
   se le advirtió y le da igual: lo que necesita es el reparto del día.
-- Los tres botones de cada cita —efectivo, tarjeta, Bizum— **siguen ahí y ya no son
-  obligatorios**, para el día que quiera marcar una suelta; en un grupo se marca la reserva
-  entera, porque paga uno por todos. El panel le reparte el dinero del día, la semana y el
-  mes por esas tres vías, y el recuento de citas le dice **cuántas lleva hechas y cuántas le
-  quedan por venir**: mezclarlas le hacía leer como cobrado lo que sólo estaba reservado.
+- **De cada cita pasada quedan dos botones: «Vino» y «No vino».** Los tres de cobro
+  —efectivo, tarjeta, Bizum— se quitaron el 2026-08-07 a petición suya: con el cierre de
+  caja ya no llegaban a ninguna cifra que no tuviera, y le cargaban la pantalla que más
+  mira. El panel le sigue repartiendo el dinero del día, la semana y el mes por esas tres
+  vías, pero ahora **sólo desde el cierre**; lo que no está cerrado se lee «sin cerrar», que
+  no es lo mismo que efectivo. El recuento de citas le dice **cuántas lleva hechas y
+  cuántas le quedan por venir**: mezclarlas le hacía leer como cobrado lo que sólo estaba
+  reservado.
 - **Se descarga su propia copia de seguridad** desde el panel: un archivo con todo —citas,
   clientes, lista de espera, servicios, horarios, festivos, vacaciones y cierres— que le
   dice cuántas filas lleva dentro, y una fecha de la última copia que se pone en ámbar
