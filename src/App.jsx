@@ -861,17 +861,12 @@ export default function FelixBarberiaApp() {
     return body.appointment;
   }
 
-  // Apuntar cómo se cobró: "efectivo", "tarjeta", "bizum" o null para dejarla
-  // sin marcar. Va por su propia ruta y CON pase: es la contabilidad de Félix,
-  // no algo que pueda tocar quien acierte el identificador de una cita.
-  //
-  // Con groupId marca la reserva entera de una vez, que es lo que pidió el
-  // cliente: en un grupo paga uno por todos.
-  async function setAppointmentPayment({ id, groupId }, metodo) {
-    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
-    const body = await apiSend("/api/cobro", "PATCH", groupId ? { groupId, metodo } : { id, metodo }, { auth: true });
-    return body.appointment || (body.appointments || []).find((a) => a.id === id) || null;
-  }
+  // Marcar cita a cita cómo se cobró se quitó en #79: el reparto del dinero
+  // sale del cierre de caja del día, que es como Félix lleva la contabilidad
+  // desde que existe. `PATCH /api/cobro` sigue en su sitio y sigue pidiendo el
+  // pase, pero ya no lo llama nadie desde aquí, y `payment_method` conserva
+  // todo lo que se marcó hasta entonces: es lo que sostiene el reparto de los
+  // días viejos que se marcaron y nunca se cerraron.
 
   // Cerrar la caja de un día: lo que marcó el datáfono y lo que entró por
   // Bizum. El efectivo NO se manda —es el resto del total del día— y el total
@@ -937,7 +932,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, joinWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -2918,7 +2913,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -3115,6 +3110,12 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // El cierre de un día, buscado por su fecha. Un día que no está aquí está
   // SIN CERRAR, que no es lo mismo que "todo en efectivo": es justo lo que
   // `ADR.md` prohíbe dar por supuesto de un hueco que nadie ha rellenado.
+  //
+  // Desde #79 es además la única vía que tiene un día nuevo de repartirse: los
+  // botones de cobro de cada cita se quitaron, así que `marksBreakdown` sólo
+  // encuentra marcas en los días que se marcaron antes de ese cambio. Esos
+  // siguen leyéndose por sus marcas, que es lo que impide que una cifra pasada
+  // cambie sola.
   const closeByDate = useMemo(() => {
     const m = {};
     for (const c of closes || []) m[c.dateKey] = c;
@@ -3316,23 +3317,6 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     await setNoShow(id, !(current && current.noShow));
   }
 
-  // Marcar (o desmarcar) cómo se cobró una cita. Si es de un grupo se marca el
-  // grupo entero: paga uno por todos, y obligar a tocar tres veces lo mismo es
-  // pedir que se quede a medias.
-  //
-  // Si falla se dice y no se toca la pantalla: un botón que se pinta como
-  // guardado sin haberse guardado es peor que no tener botón.
-  async function setPago(id, metodo) {
-    const current = appointments.find((a) => a.id === id);
-    try {
-      const updated = await setAppointmentPayment({ id, groupId: current?.groupId }, metodo);
-      if (updated) setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
-      await refreshAppointments();
-    } catch (e) {
-      window.alert(`No se ha podido guardar: ${e.message}`);
-    }
-  }
-
   async function addManualAppt(data) {
     try {
       // Sin holdId a propósito: el panel no tiene reserva temporal propia, y
@@ -3466,7 +3450,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   </LoadingRegion>
                 ) : apptsForDate(cursorDate).length === 0 ? (
                   <EmptyState text="Sin citas este día." />
-                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} onSetPago={(metodo) => setPago(a.id, metodo)} />)}
+                ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} />)}
               </div>
               {loaded && dataLoaded && !esperaDelDia && (
                 <EsperaDelDia dia={dateKey(cursorDate)} hueco={null} waitlist={waitlist} services={services} schedule={schedule} onNotified={markWaitlistNotified} onRemove={removeWaitlistEntry} />
@@ -3688,7 +3672,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
         </>
       )}
 
-      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} onSetPago={(metodo) => setPago(selectedAppt.id, metodo)} past={hasPassed(selectedAppt)} />}
+      {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
       {/* El modal recibe la agenda tal cual la tiene el panel: los huecos se
           calculan con lo que ya está cargado, sin volver a pedir nada. Para
           saberlos hacen falta las dos cargas: el horario y los días cerrados
@@ -3997,11 +3981,7 @@ const PURGED = "Datos borrados";
 const shownName = (a) => a.name || PURGED;
 const shownPhone = (a) => a.phone || "—";
 
-// Las tres formas de cobro y su etiqueta. El valor es el que viaja al
-// servidor y el que guarda la columna; la etiqueta es la que lee Félix.
-const FORMAS_PAGO = [["efectivo", "Efectivo"], ["tarjeta", "Tarjeta"], ["bizum", "Bizum"]];
-
-function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow, onSetPago }) {
+function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow }) {
   const s = services.find((x) => x.id === a.service);
   const b = barbers?.find((x) => x.id === a.barberId);
   const [saving, setSaving] = useState(false);
@@ -4057,65 +4037,16 @@ function ApptRow({ a, services, barbers, onClick, groupSize, past, onSetNoShow, 
       </button>
       {/* Solo en las citas cuya hora ya pasó. Marcar como ausente a alguien que
           todavía puede llegar no significa nada, y llenaría de botones justo la
-          parte que Félix mira para saber quién viene ahora. */}
+          parte que Félix mira para saber quién viene ahora.
+          Estos dos son los únicos botones de una cita pasada. Los tres de cobro
+          —efectivo, tarjeta, Bizum— se quitaron en #79: el reparto del dinero
+          lo da el cierre de caja del día, así que marcarlo cita a cita era
+          trabajo que no llegaba a ninguna cifra. */}
       {past && (
         <div style={{ display: "flex", gap: 6, padding: "0 12px 10px" }}>
           {markBtn("Vino", false)}
           {markBtn("No vino", true)}
         </div>
-      )}
-      {/* Cómo se cobró. No aparece en un ausente: a quien no vino no se le
-          cobró nada, y ofrecer el botón sería ofrecer un apunte imposible. */}
-      {past && !a.noShow && onSetPago && (
-        <PagoButtons a={a} groupSize={groupSize} onSetPago={onSetPago} />
-      )}
-    </div>
-  );
-}
-
-// Los tres botones de cobro. Volver a pulsar el que ya está puesto lo quita y
-// la cita vuelve a "sin marcar": es la única forma de deshacer un dedazo, y
-// "sin marcar" es una cifra de verdad en el panel, no un limbo.
-function PagoButtons({ a, groupSize, onSetPago, compact }) {
-  const [saving, setSaving] = useState(false);
-
-  async function elegir(metodo) {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await onSetPago(a.paymentMethod === metodo ? null : metodo);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={{ padding: compact ? 0 : "0 12px 10px" }}>
-      <div style={{ display: "flex", gap: 6 }}>
-        {FORMAS_PAGO.map(([valor, etiqueta]) => {
-          const activo = a.paymentMethod === valor;
-          return (
-            <button
-              key={valor}
-              onClick={() => elegir(valor)}
-              disabled={saving}
-              aria-pressed={activo}
-              className={activo ? undefined : "ghost-btn"}
-              style={{
-                flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11.5, fontWeight: activo ? 700 : 500,
-                cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1,
-                ...(activo ? { background: "rgba(201,162,39,0.16)", border: `1px solid ${GOLD}`, color: GOLD } : null),
-              }}
-            >
-              {etiqueta}
-            </button>
-          );
-        })}
-      </div>
-      {/* Se avisa antes de tocar, no después: marcar aquí mueve también las
-          citas de los demás del grupo, y eso hay que saberlo de antemano. */}
-      {a.groupId && groupSize > 1 && (
-        <div style={{ fontSize: 10.5, color: SMOKE, marginTop: 5 }}>Se marca la reserva entera ({groupSize} personas)</div>
       )}
     </div>
   );
@@ -4162,18 +4093,22 @@ function LoadingRegion({ label, children, style, className }) {
 // `wide` la pone a lo ancho de la rejilla. La de ausencias es impar en las dos
 // pantallas, y media fila vacía a su lado se lee como algo que falta.
 // El dinero cobrado, repartido en las cuatro cifras que Félix pidió: efectivo,
-// tarjeta, Bizum y lo que todavía no ha marcado. Las cuatro suman el total.
+// tarjeta, Bizum y lo que todavía no tiene cierre. Las cuatro suman el total.
 //
-// "Sin marcar" va en gris y no en dorado a propósito: no es dinero de otra
-// procedencia, es dinero cuya procedencia no consta, y leerlo igual que los
-// otros tres invitaría a darlo por bueno. Se enseña aunque valga 0 € — un
-// recuadro que aparece y desaparece movería el resto de la pantalla, y un cero
-// ahí es la buena noticia de que está todo apuntado.
+// "Sin cerrar" va en gris y no en dorado a propósito: no es dinero de otra
+// procedencia, es dinero cuya procedencia no consta todavía, y leerlo igual que
+// los otros tres invitaría a darlo por bueno. Desde #79 es el rótulo del cuarto
+// recuadro, y dice exactamente lo que le pasa a ese dinero: entró en un día al
+// que le falta el cierre de caja. Antes decía "sin marcar", que era pedirle a
+// Félix algo que ya no puede hacer — los botones de cobro de cada cita se
+// quitaron, y cerrar el día es la única vía que queda. Se enseña aunque valga
+// 0 € — un recuadro que aparece y desaparece movería el resto de la pantalla, y
+// un cero ahí es la buena noticia de que no queda nada por cerrar.
 //
 // `totalLabel` sólo lo usa la pantalla del día, que no tiene ningún recuadro
 // de total propio; la semana y el mes ya traen el suyo encima.
 //
-// En un día cerrado, "sin marcar" vale 0 y el efectivo es una resta: los
+// En un día cerrado, "sin cerrar" vale 0 y el efectivo es una resta: los
 // recuadros son los mismos y no hace falta una segunda pantalla para leer un
 // día cerrado. Lo que cambia es de dónde salen las cifras, y eso lo dice el
 // bloque de cierre que va justo debajo.
@@ -4189,7 +4124,7 @@ function MoneyBlock({ m, totalLabel, nota }) {
         <StatCard label="Efectivo" value={`${fmtEur(m.efectivo)}€`} sub={m.cerrado ? "del cierre" : null} />
         <StatCard label="Tarjeta" value={`${fmtEur(m.tarjeta)}€`} />
         <StatCard label="Bizum" value={`${fmtEur(m.bizum)}€`} />
-        <StatCard label="Sin marcar" value={`${fmtEur(m.sinMarcar)}€`} tone="apagada" />
+        <StatCard label="Sin cerrar" value={`${fmtEur(m.sinMarcar)}€`} tone="apagada" />
       </div>
       {nota && <div style={{ fontSize: 11.5, color: SMOKE, marginTop: 6, marginBottom: 4 }}>{nota}</div>}
     </>
@@ -4671,7 +4606,7 @@ function ModalShell({ title, onClose, children }) {
 // puede llamar —que es justo para lo que se abre desde un aviso— pero no lleva
 // "Cancelar cita" ni "Marcar como no se presentó". No hay nada que cancelar ni
 // nadie a quien esperar, y ofrecerlo sería ofrecer un botón que miente.
-function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow, onSetPago, past }) {
+function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onToggleNoShow }) {
   const s = services.find((x) => x.id === appt.service);
   const b = barbers?.find((x) => x.id === appt.barberId);
   const cancelada = !!appt.cancelada;
@@ -4703,14 +4638,8 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
           Marcado como "no se presentó"
         </div>
       )}
-      {/* Igual que en la lista del día: sólo cuando la hora ya pasó, y nunca
-          en un ausente ni en una cancelada, que no cobraron nada. */}
-      {!cancelada && !appt.noShow && past && onSetPago && (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 6 }}>Cómo ha pagado</div>
-          <PagoButtons a={appt} groupSize={groupSize} onSetPago={onSetPago} compact />
-        </div>
-      )}
+      {/* La ficha tampoco pregunta ya cómo ha pagado (#79): igual que en la
+          lista del día, lo que reparte el dinero es el cierre de caja. */}
       {cancelada && (
         <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12, textAlign: "center" }}>
           {cuando ? `Esta cita se canceló el ${cuando}` : "Esta cita está cancelada"}
