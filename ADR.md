@@ -127,23 +127,26 @@ endorsement.
   Any new money figure must exclude `noShow` explicitly — the per-appointment price helper
   deliberately does **not** know about it, because the losses figure has to price exactly
   the ones that were not collected.
-- **How an appointment was paid is recorded two ways, and the same day must never be
-  counted by both.** `payment_method` is `NULL` until Félix says otherwise, and that `NULL`
-  shows as "sin marcar" — never folded into cash. `daily_closes` holds one row per closed
-  day with the card and Bizum totals he reads off the datáfono; **cash is derived,
-  `total − card − bizum`, and is never stored**, because a stored derived figure is how a
-  day stops adding up. The day's total is computed **server-side** from that day's passed,
-  uncancelled, non-`no_show` appointments — never accepted from the browser — and "today"
-  is `Europe/Madrid`, not the server's UTC. A period composes day by day: a closed day
-  from its close with "sin marcar" at 0, an open day from its per-appointment marks. If a
-  later `no_show` drops a day's total below what was declared, it reads as a close to
-  review with cash pinned at 0, **never negative**. Written only by `PATCH /api/cobro` and
-  `PUT`/`DELETE /api/cierre`, both checking the admin pass before parsing the body; neither
-  may ever join the public `PATCH /api/appointments`, which cancels on the id alone. Both
-  leave only through `admin-data`. Marking a payment clears `no_show` and marking `no_show`
-  clears the payment, server-side — nobody paid for not turning up. Nothing was ever
-  backfilled: assuming a year of takings were cash would be inventing them. The annual
-  purge touches neither — the row loses its person and keeps its money.
+- **The day's close is the only live record of how money came in** (#79 removed the
+  per-appointment buttons). `daily_closes` holds one row per closed day with the card and
+  Bizum totals Félix reads off the datáfono; **cash is derived, `total − card − bizum`, and
+  is never stored**, because a stored derived figure is how a day stops adding up. The
+  day's total is computed **server-side** from that day's passed, uncancelled, non-`no_show`
+  appointments — never accepted from the browser — and "today" is `Europe/Madrid`, not the
+  server's UTC. If a later `no_show` drops a day's total below what was declared, it reads
+  as a close to review with cash pinned at 0, **never negative**. Written only by
+  `PUT`/`DELETE /api/cierre`, checking the admin pass before parsing the body; it may never
+  join the public `PATCH /api/appointments`, which cancels on the id alone. It leaves only
+  through `admin-data`. The annual purge leaves it — the row loses its person, keeps its
+  money.
+- **`payment_method` is frozen history, and the same day must never be counted twice.** The
+  column keeps everything marked before #79 and takes nothing new; `PATCH /api/cobro` still
+  exists, still demands the pass, and nothing calls it. A period still composes **day by
+  day**: a closed day from its close with the fourth figure at 0, an open day from whatever
+  marks it happens to carry — never both for one day, which is where the double count would
+  be. `NULL` is now the normal state and is still never folded into cash: it reads as "sin
+  cerrar". Never backfill it — assuming a year of takings were cash would be inventing them.
+  `no_show` still clears the payment server-side; nobody paid for not turning up.
 
 **Getting to production**
 
