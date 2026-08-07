@@ -33,6 +33,13 @@ export function appointmentOut(r) {
   // al cargar: se rellenan aquí con lo que vale el servicio hoy.
   if (r.duration_minutes != null) out.duration = r.duration_minutes;
   if (r.price != null) out.price = Number(r.price);
+  // Lo que Félix cobró de verdad, cuando no fue lo que valía el servicio. Va
+  // SIEMPRE, incluso vacío, por lo mismo que `paymentMethod`: el panel tiene
+  // que distinguir "se cobró el precio normal" de un campo que no ha llegado.
+  // Y va SÓLO por aquí: `myAppointmentOut` no lo lleva, que es lo que mantiene
+  // el descuento entre Félix y su caja — el cliente sigue leyendo el precio
+  // que le dijeron al reservar.
+  out.chargedPrice = r.charged_price != null ? Number(r.charged_price) : null;
   // Una cita reservada junto a otras. NULL en las dos columnas = cita suelta,
   // que es lo que son casi todas y lo que no lleva ninguno de estos campos.
   if (r.group_id != null) {

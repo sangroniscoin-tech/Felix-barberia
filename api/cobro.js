@@ -1,4 +1,14 @@
-// Apuntar cómo se cobró una cita: efectivo, tarjeta o Bizum.
+// Cambiar lo que se cobró de verdad por una cita.
+//
+// Félix le rebaja el precio a los clientes de años: donde la lista dice 12 él
+// cobra 10. Sin esto, el total del día —que lo suma el servidor con el precio
+// de cada cita— dice 12, y al cerrar la caja el efectivo, que es el total
+// menos tarjeta menos Bizum, le sale de más.
+//
+// Escribe `charged_price` y NO toca `price`. `price` es lo que costaba el
+// servicio el día que se reservó, y es lo que el cliente sigue leyendo cuando
+// busca su cita con su teléfono. Separadas, siempre se puede ver qué se dijo y
+// qué se cobró; pisar una perdería la otra.
 //
 // Esto lo hace FÉLIX, no un cliente, y por eso pide el pase del panel. Es lo
 // contrario que /api/waitlist: aquella es pública porque la escribe quien
@@ -8,13 +18,20 @@
 // Esa ruta es PÚBLICA —cancela y marca "no se presentó" sabiendo solo el
 // identificador— y meterle un campo que exige pase mezclaría dos niveles de
 // permiso en un mismo sitio. Una ruta, una cosa.
+//
+// Hasta #79 esta misma ruta apuntaba cómo se había pagado, efectivo o tarjeta
+// o Bizum. Aquello se quitó y el hueco es el que ocupa esto: `api/` está en 12
+// funciones, que es el techo de Vercel Hobby, y una más no despliega.
+// `payment_method` se queda con lo que se marcó entonces y ya no se escribe
+// desde ningún sitio.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { appointmentOut } from "./_lib/shape.js";
 
-// Los mismos tres que acepta el CHECK de la columna. null es "sin marcar",
-// que es lo que deja el botón cuando se vuelve a tocar el que ya estaba.
-const METODOS = ["efectivo", "tarjeta", "bizum"];
+// Un corte no vale mil euros. El tope no está para adivinar su tarifa sino
+// para que un dedazo en el teclado no entre en la contabilidad como si tal
+// cosa y descuadre el día entero.
+const IMPORTE_MAXIMO = 1000;
 
 export default async function handler(req, res) {
   if (req.method !== "PATCH") return methodNotAllowed(res, ["PATCH"]);
@@ -33,74 +50,64 @@ export default async function handler(req, res) {
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
 
-  // Se valida aquí aunque el panel solo mande uno de los tres: el navegador
-  // es una comodidad y cualquiera puede saltárselo.
-  const metodo = body.metodo === null || body.metodo === undefined || body.metodo === ""
-    ? null
-    : body.metodo;
-  if (metodo !== null && !METODOS.includes(metodo)) {
+  const id = body.id;
+  if (!id) {
     return res.status(400).json({
       ok: false,
       reason: "invalid_input",
-      field: "metodo",
-      message: "Esa forma de pago no existe.",
+      field: "id",
+      message: "Falta el identificador de la cita.",
     });
   }
 
-  // Marcar un cobro dice que esa persona vino: no se le puede haber cobrado a
-  // quien no se presentó. Así que el mismo UPDATE le quita la marca de
-  // ausente. Al revés lo hace PATCH /api/appointments, que al marcar
-  // "no_show" borra la forma de pago.
-  //
-  // Desmarcar (metodo null) NO toca el estado: quitar un cobro puesto por
-  // error no debería revivir ni enterrar una ausencia.
-  const cambios = metodo === null
-    ? { payment_method: null }
-    : { payment_method: metodo, status: "booked", cancelled_at: null };
+  // Vacío devuelve la cita a su precio normal. Es la vuelta atrás de un
+  // dedazo, y tiene que poder distinguirse de un 0 escrito a conciencia: 0 es
+  // un corte regalado, que es una cifra de verdad.
+  const importe = leerImporte(body.importe);
+  if (importe === INVALIDO) {
+    return res.status(400).json({
+      ok: false,
+      reason: "invalid_input",
+      field: "importe",
+      message: `Escribe un importe entre 0 y ${IMPORTE_MAXIMO} €.`,
+    });
+  }
 
   try {
-    // Con groupId se marca la reserva entera de una vez, en una sola
-    // sentencia: en un grupo paga uno por todos. Las canceladas se quedan
-    // fuera — no están en el panel y no cuentan en el dinero.
-    const groupId = body.groupId;
-    if (groupId) {
-      const { data, error } = await supabase
-        .from("appointments")
-        .update(cambios)
-        .eq("group_id", groupId)
-        .neq("status", "cancelled")
-        .select();
-      if (error) throw new Error(error.message);
-      if (!data || data.length === 0) return noExiste(res);
-      return res.status(200).json({ ok: true, appointments: data.map(appointmentOut) });
-    }
-
-    const id = body.id;
-    if (!id) {
-      return res.status(400).json({
-        ok: false,
-        reason: "invalid_input",
-        field: "id",
-        message: "Falta el identificador de la cita.",
-      });
-    }
-
+    // Se valida aquí aunque el panel también lo haga: el navegador es una
+    // comodidad y cualquiera puede saltárselo.
+    //
+    // Las canceladas se quedan fuera — no están en el panel, no cuentan en el
+    // dinero y no se les cobró nada. En un grupo se cambia persona a persona,
+    // a diferencia de lo que hacía la forma de pago: un descuento es de un
+    // cliente concreto, no de la reserva entera.
     const { data, error } = await supabase
       .from("appointments")
-      .update(cambios)
+      .update({ charged_price: importe })
       .eq("id", id)
       .neq("status", "cancelled")
       .select()
       .single();
-    if (error || !data) return noExiste(res);
+    if (error || !data) {
+      return res.status(404).json({ ok: false, reason: "not_found", message: "Esa cita ya no existe." });
+    }
     return res.status(200).json({ ok: true, appointment: appointmentOut(data) });
   } catch (e) {
     return fail(res, e);
   }
 }
 
-function noExiste(res) {
-  return res.status(404).json({ ok: false, reason: "not_found", message: "Esa cita ya no existe." });
+// Marca de "esto no es un importe", que no puede ser null porque null es una
+// respuesta válida: la de volver al precio del servicio.
+const INVALIDO = Symbol("importe_invalido");
+
+function leerImporte(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(",", "."));
+  if (!Number.isFinite(n) || n < 0 || n > IMPORTE_MAXIMO) return INVALIDO;
+  // A céntimos: lo que llega del navegador puede traer los decimales que
+  // quiera, y el dinero de un día no se suma con tres.
+  return Math.round(n * 100) / 100;
 }
 
 function safeParse(s) {

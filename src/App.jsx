@@ -861,12 +861,18 @@ export default function FelixBarberiaApp() {
     return body.appointment;
   }
 
-  // Marcar cita a cita cómo se cobró se quitó en #79: el reparto del dinero
-  // sale del cierre de caja del día, que es como Félix lleva la contabilidad
-  // desde que existe. `PATCH /api/cobro` sigue en su sitio y sigue pidiendo el
-  // pase, pero ya no lo llama nadie desde aquí, y `payment_method` conserva
-  // todo lo que se marcó hasta entonces: es lo que sostiene el reparto de los
-  // días viejos que se marcaron y nunca se cerraron.
+  // Cambiar lo que se cobró de verdad por una cita: Félix le rebaja el precio
+  // a los clientes de años, y el total del día tiene que decir lo que cobró.
+  // Vacío devuelve la cita a su precio normal.
+  //
+  // Va CON pase: es la contabilidad de la barbería, no algo que pueda tocar
+  // quien acierte el identificador de una cita. Y va cita a cita, incluso
+  // dentro de un grupo: el descuento es de un cliente concreto.
+  async function setAppointmentCharged(id, importe) {
+    if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
+    const body = await apiSend("/api/cobro", "PATCH", { id, importe }, { auth: true });
+    return body.appointment;
+  }
 
   // Cerrar la caja de un día: lo que marcó el datáfono y lo que entró por
   // Bizum. El efectivo NO se manda —es el resto del total del día— y el total
@@ -932,7 +938,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, joinWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, setAppointmentCharged, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -2913,7 +2919,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentCharged, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -3029,8 +3035,16 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     });
   }, [appointments, cursorDate]);
 
-  // Precio de una cita: usa el precio guardado en el momento de la reserva; si no lo tiene (citas antiguas), usa el precio actual del servicio
+  // Lo que vale una cita, en tres escalones y en este orden: lo que Félix
+  // cobró de verdad —le rebaja el precio a los clientes de años—, lo que
+  // costaba el servicio el día que se reservó, y sólo si no hay ninguna de las
+  // dos (las citas migradas antiguas), lo que vale hoy.
+  //
+  // `api/cierre.js` tiene la misma cascada y tiene que seguir teniéndola: es
+  // la que valida el cierre. Si se separan, Félix cerraría contra un total
+  // distinto del que está leyendo en la pantalla.
   function apptPrice(a) {
+    if (typeof a.chargedPrice === "number") return a.chargedPrice;
     if (typeof a.price === "number") return a.price;
     const svc = services.find((s) => s.id === a.service);
     return svc?.price || 0;
@@ -3184,6 +3198,25 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // entre pasado y futuro, así que las cifras se recalculan solas al pasar la
   // hora de una cita, sin que Félix recargue nada. `closes` entra por lo mismo:
   // guardar o deshacer un cierre recoloca el reparto sin recargar el panel.
+  // Las citas del día tal y como las necesita el cierre de caja: las que se
+  // han cobrado de verdad —pasadas y sin ausentes, que valen 0 €; las
+  // canceladas no llegan siquiera al panel— con lo que valdrían normalmente y
+  // lo que Félix le haya puesto a mano. Es la misma regla que decide el total
+  // del día, aquí y en el servidor.
+  const citasCobrables = useMemo(() => apptsForDate(cursorDate)
+    .filter((a) => hasPassed(a) && !a.noShow)
+    .map((a) => {
+      const svc = services.find((s) => s.id === a.service);
+      return {
+        id: a.id,
+        time: a.time,
+        name: shownName(a),
+        service: svc?.name || "",
+        normal: typeof a.price === "number" ? a.price : (svc?.price || 0),
+        cobrado: typeof a.chargedPrice === "number" ? a.chargedPrice : null,
+      };
+    }), [appointments, cursorDate, services, now]);
+
   const dayMarks = useMemo(() => marksBreakdown(apptsForDate(cursorDate)), [appointments, cursorDate, services, now]);
   const dayMoney = useMemo(() => dayBreakdown(dateKey(cursorDate), apptsForDate(cursorDate)), [appointments, cursorDate, services, now, closeByDate]);
   const weekMoney = useMemo(() => periodBreakdown(weekAppts), [weekAppts, services, now, closeByDate]);
@@ -3315,6 +3348,18 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   async function toggleNoShow(id) {
     const current = appointments.find((a) => a.id === id);
     await setNoShow(id, !(current && current.noShow));
+  }
+
+  // Cambiar lo que se cobró por una cita, desde el cierre de caja. El refresco
+  // de después es lo que recalcula el total del día, y con él el efectivo que
+  // la pantalla del cierre pinta en vivo mientras teclea.
+  //
+  // El error NO se traga aquí: sube a la casilla que lo pidió, que se pinta en
+  // rojo y vuelve a lo que hay guardado. Un importe pintado como guardado sin
+  // estarlo es dinero descuadrado que nadie va a encontrar después.
+  async function setPrecioCobrado(id, importe) {
+    await setAppointmentCharged(id, importe);
+    await refreshAppointments();
   }
 
   async function addManualAppt(data) {
@@ -3479,6 +3524,8 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   cierre={closeByDate[dateKey(cursorDate)] || null}
                   marcas={dayMarks}
                   revisar={dayMoney.revisar}
+                  citas={citasCobrables}
+                  onSetPrecio={setPrecioCobrado}
                   onSave={saveClose}
                   onRemove={removeClose}
                   onDone={refreshAppointments}
@@ -4158,6 +4205,75 @@ function leerImporte(v) {
   return Number(s);
 }
 
+// Una línea de la lista del cierre: a qué hora, quién, qué servicio y por
+// cuánto. La casilla vacía enseña en gris lo que vale normalmente, así que de
+// un vistazo se ve a quién le ha hecho precio y a quién no, sin leer dos
+// columnas. Borrarla devuelve la cita a ese precio de siempre, que es la vuelta
+// atrás de un dedazo.
+//
+// Se guarda al SALIR de la casilla, no en cada tecla: escribir "10" pasa por
+// "1", y guardar un euro porque iba de camino descuadraría el día.
+//
+// Si el guardado falla, la casilla vuelve a lo que hay en la base de datos y se
+// dice en voz alta. Un importe pintado como guardado sin estarlo es dinero
+// descuadrado que nadie va a encontrar después.
+function PrecioCita({ cita, onSet }) {
+  const guardado = cita.cobrado != null ? fmtEur(cita.cobrado) : "";
+  const [valor, setValor] = useState(guardado);
+  const [guardando, setGuardando] = useState(false);
+  const [malEscrito, setMalEscrito] = useState(false);
+
+  async function commit() {
+    const limpio = valor.trim();
+    if (guardando || limpio === guardado) return;
+    // Vacío es "el precio de siempre", no un cero. Un 0 escrito a conciencia
+    // sí es una cifra: un corte regalado.
+    const importe = limpio === "" ? null : leerImporte(limpio);
+    if (importe === null && limpio !== "") {
+      setMalEscrito(true);
+      return;
+    }
+    setGuardando(true);
+    setMalEscrito(false);
+    try {
+      await onSet(cita.id, importe);
+    } catch (e) {
+      setValor(guardado);
+      window.alert(`No se ha podido guardar: ${e.message}`);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: GOLD, minWidth: 38 }}>{cita.time}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: BONE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cita.name}</div>
+        <div style={{ fontSize: 10.5, color: malEscrito ? "#e0a0a0" : SMOKE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {malEscrito ? "Sólo números (10 o 10,50)" : cita.service}
+        </div>
+      </div>
+      <input
+        value={valor}
+        onChange={(e) => { setValor(e.target.value); setMalEscrito(false); }}
+        onBlur={commit}
+        disabled={guardando}
+        inputMode="decimal"
+        aria-label={`Cobrado a ${cita.name} de las ${cita.time}`}
+        placeholder={fmtEur(cita.normal)}
+        style={{
+          ...inputStyle,
+          width: 74, padding: "6px 8px", fontSize: 12.5, textAlign: "right",
+          opacity: guardando ? 0.5 : 1,
+          borderColor: malEscrito ? "#6b2323" : "rgba(255,255,255,0.2)",
+        }}
+      />
+      <div style={{ fontSize: 11.5, color: SMOKE }}>€</div>
+    </div>
+  );
+}
+
 // El cierre de caja del día: Félix escribe lo que marca el datáfono y lo que
 // le entró por Bizum, y el efectivo sale de restar. Así no tiene que ir
 // marcando cliente por cliente, que es lo que pidió y lo que no hacía.
@@ -4170,7 +4286,7 @@ function leerImporte(v) {
 // el servidor, que además calcula el total del día por su cuenta. Y si el
 // guardado falla se dice: un cierre pintado como guardado sin estarlo es
 // dinero descuadrado que nadie va a encontrar después.
-function CierreCaja({ dateKey, total, cierre, marcas, revisar, onSave, onRemove, onDone }) {
+function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPrecio, onSave, onRemove, onDone }) {
   const inicial = (n) => (n ? String(fmtEur(n)) : "");
   const [tarjeta, setTarjeta] = useState(() => inicial(cierre ? cierre.card : marcas.tarjeta));
   const [bizum, setBizum] = useState(() => inicial(cierre ? cierre.bizum : marcas.bizum));
@@ -4233,6 +4349,19 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, onSave, onRemove,
       {revisar && (
         <div style={{ fontSize: 11.5, color: "#e0a0a0", marginBottom: 10 }}>
           Este cierre suma más que el total del día — pasó al marcar a alguien como ausente. Vuelve a escribir los importes o deshaz el cierre.
+        </div>
+      )}
+
+      {/* Lo cobrado por cada cita, ANTES de las casillas de tarjeta y Bizum:
+          primero se cuadra el total del día y después se reparte, que es el
+          orden en que Félix cierra. Cambiar un importe aquí mueve el total de
+          arriba y, con él, el efectivo que se pinta en vivo abajo. */}
+      {citas && citas.length > 0 && onSetPrecio && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: SMOKE, marginBottom: 6 }}>
+            Lo cobrado por cada cita. Cámbialo si le has hecho precio; déjalo vacío para el de siempre.
+          </div>
+          {citas.map((c) => <PrecioCita key={c.id} cita={c} onSet={onSetPrecio} />)}
         </div>
       )}
 

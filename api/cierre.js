@@ -81,7 +81,7 @@ async function totalDelDiaCentimos(supabase, dateKey, now = new Date()) {
   const [citas, servicios] = await Promise.all([
     supabase
       .from("appointments")
-      .select("start_time, price, service_id")
+      .select("start_time, charged_price, price, service_id")
       .eq("appointment_date", dateKey)
       .eq("is_sample_data", false)
       .neq("status", "cancelled")
@@ -100,10 +100,17 @@ async function totalDelDiaCentimos(supabase, dateKey, now = new Date()) {
   // sonado. Un día futuro no llega hasta aquí: se rechaza antes.
   const limite = dateKey < hoy ? Infinity : dateKey === hoy ? minutosAhoraMadrid(now) : -Infinity;
 
+  // La cascada del dinero, y el orden importa: primero lo que Félix cobró de
+  // verdad —le rebaja el precio a los clientes de años—, luego lo que costaba
+  // el servicio al reservar, y sólo si no hay ninguna de las dos, lo que vale
+  // hoy. Es la misma que usa el panel, y tiene que seguir siéndolo: ésta es la
+  // cifra contra la que se valida un cierre, así que si se separan, Félix
+  // cerraría contra un total distinto del que está leyendo.
   let total = 0;
   for (const c of citas.data || []) {
     if (minutosDeHora(c.start_time) > limite) continue;
-    total += c.price != null ? Math.round(Number(c.price) * 100) : (precioDe[c.service_id] ?? 0);
+    const cobrado = c.charged_price != null ? c.charged_price : c.price;
+    total += cobrado != null ? Math.round(Number(cobrado) * 100) : (precioDe[c.service_id] ?? 0);
   }
   return total;
 }
