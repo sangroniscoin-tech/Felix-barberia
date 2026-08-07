@@ -40,6 +40,13 @@ acceptance criteria on every change from here on:
   by one. That mark is what makes the takings real: an absence is worth €0 and shows up
   beside them as "perdido por ausencias", which is the only place he sees what the
   no-shows cost him.
+- **Le hace precio a los clientes de años** —10 € donde la lista dice 12— y desde el
+  2026-08-07 puede apuntarlo: al cerrar el día ve sus citas cobrables con una casilla de
+  importe, y cambiar una mueve el total del día. Vacía vuelve al precio de siempre. **El
+  cliente no lo ve**: cuando busca su cita en la web lee el precio que le dijeron al
+  reservar, y el descuento se queda entre Félix y su caja. Lo pidió porque el efectivo le
+  salía de más al cerrar. Un precio fijo que la web recuerde por cliente se descartó: es
+  una lista de tarifas por persona y es otra cosa.
 - **Cierra la caja del día por importe.** Al terminar mira el datáfono, escribe lo que pasó
   por tarjeta y lo que le llegó por Bizum, y **el efectivo es lo que sobra** del total del
   día. Lo pidió así: marcar cliente a cliente era trabajo que su forma de cobrar no
