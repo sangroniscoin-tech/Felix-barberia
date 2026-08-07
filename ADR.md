@@ -57,15 +57,24 @@ endorsement.
   15 €/10 €/22 € for half a second before the real prices arrived.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
-- **Nothing calls Google any more** (#40, #53). The script is still deployed and
-  unreachable by any agent; leave it closed and quiet. Web Push tells Félix now.
-- **How far ahead you can book is one number, `DIAS_MAX_RESERVA` in `shared/`, read by both
-  doors.** The day selector in `src/App.jsx` and the validation in `api/appointments.js`
-  import the same constant. A copy on each side is exactly what let the page offer 14 days
-  while the server accepted 2029 — and the past, too. "Today" is computed in
-  `Europe/Madrid`, not the server's UTC, or between midnight and 02:00 the window's last
-  day falls short. A valid admin pass skips the check at both ends, like the group size:
-  the pass moves a number, never skips a check.
+- **Anything both doors have to agree on lives in `shared/`, once.** `DIAS_MAX_RESERVA` —
+  how far ahead you can book — is imported by the day selector in `src/App.jsx` and by the
+  validation in `api/appointments.js`; a copy on each side is exactly what let the page
+  offer 14 days while the server accepted 2029, and the past too. `franja-horaria.js` is
+  the same rule for **where the morning ends**: it is derived from that day's own schedule
+  blocks, never a written-in hour, and the public form, the panel and the server all read
+  it. Two notions of "afternoon" is how two screens come to disagree about the same
+  customer. "Today" is computed in `Europe/Madrid`, not the server's UTC, or between
+  midnight and 02:00 the window's last day falls short. A valid admin pass skips the
+  booking-window check at both ends, like the group size: the pass moves a number, never
+  skips a check.
+- **The waiting list is written one row at a time, by id.** It used to be saved like every
+  other collection — wipe the table, reinsert what the browser holds — which regenerated
+  every `id` and `created_at`. That destroys the only thing the list is ordered by, who
+  signed up first, and would erase the franja and the notified mark of everyone else every
+  time Félix removed one person. `waitlistEntry` in `api/admin.js` touches the single row;
+  the wipe-and-replace path stays only for collections whose rows carry no history, and
+  **any new `waitlist` column must be carried through it the same day it is added**.
 - The Google Sheet is frozen as the migration's rollback, holding data as of 2026-08-02.
   It was found **in the trash** during the migration; restoring it is the only reason the
   data survived. Never write to it, never delete it, never let it be trashed again.
@@ -95,6 +104,14 @@ endorsement.
   only once the panel has its appointments, or it would decide "not there" against a list
   that hasn't arrived. The service worker **navigates** an open window before focusing it:
   focusing alone leaves it wherever it was, which is what made the notice a dead end.
+  A cancellation's notice also carries **how many people on the waiting list that hueco
+  actually fits** — a count, never a name, for the same reason the id is missing. Counting
+  can fail without silencing the notice: it falls back to zero and Félix still gets told.
+- **Whether Félix is told is decided by the admin pass, on the server.** `tellShop` returns
+  early when the request carries a valid one, so his own bookings and cancellations don't
+  ring his own phone while a customer's do. The panel therefore has to send the pass on
+  **every** write, not only the ones that need permission — it went without it on cancel,
+  and that alone was enough to make the app notify him of what he had just done himself.
 - **Cancelled appointments are visible one day at a time and nowhere else.**
   `/api/admin-data?canceladas=<day>` serves them in their own array, only for that day, only
   behind the admin key. They never join `appointments`, so they stay out of the agenda, the
