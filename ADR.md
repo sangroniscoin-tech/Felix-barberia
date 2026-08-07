@@ -140,13 +140,23 @@ endorsement.
   through `admin-data`. The annual purge leaves it — the row loses its person, keeps its
   money.
 - **`payment_method` is frozen history, and the same day must never be counted twice.** The
-  column keeps everything marked before #79 and takes nothing new; `PATCH /api/cobro` still
-  exists, still demands the pass, and nothing calls it. A period still composes **day by
+  column keeps everything marked before #79 and takes nothing new — `PATCH /api/cobro` was
+  reused for prices in #82, so nothing writes it anywhere. A period still composes **day by
   day**: a closed day from its close with the fourth figure at 0, an open day from whatever
   marks it happens to carry — never both for one day, which is where the double count would
   be. `NULL` is now the normal state and is still never folded into cash: it reads as "sin
   cerrar". Never backfill it — assuming a year of takings were cash would be inventing them.
-  `no_show` still clears the payment server-side; nobody paid for not turning up.
+- **What a cita is worth reads `charged_price` → `price` → the service's price today**, and
+  that cascade lives in **two places that must never drift**: `apptPrice` in the panel and
+  `totalDelDiaCentimos` in `api/cierre.js`. The server's is what a close is validated
+  against, so a drift means Félix closing against a total he is not the one reading.
+  `charged_price` is what he actually charged (#82 — he cuts long-standing clients a price);
+  `price` is the quote frozen at booking and **is never overwritten**, because it is what
+  the customer still reads in "mis citas" and the only record of what was promised.
+  `myAppointmentOut` must never carry `charged_price`. `NULL` means "charged the normal
+  price" and no row was ever backfilled. Written only by `PATCH /api/cobro`, admin pass
+  checked before the body is parsed, one appointment at a time even inside a group — a
+  discount belongs to one client, unlike the payment mark it replaced.
 
 **Getting to production**
 
