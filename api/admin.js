@@ -11,10 +11,9 @@
 // antes de leer el cuerpo, para que nada de lo que mande un desconocido llegue
 // a interpretarse.
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
-import { cleanName, cleanPhone, isValidPhone } from "./_lib/shape.js";
+import { cleanName } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
-import { normalizarFranja } from "../shared/franja-horaria.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -25,9 +24,12 @@ export default async function handler(req, res) {
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const { collection, items } = body;
   // "lastBackup" no manda ninguna lista: no es una colección que se reemplace,
-  // es una marca de tiempo, y la pone el servidor. Todo lo demás sí llega con
-  // su lista entera y sin ella no hay nada que guardar.
-  if (collection !== "lastBackup" && !Array.isArray(items) && typeof items !== "object") {
+  // es una marca de tiempo, y la pone el servidor. "waitlistEntry" tampoco:
+  // toca UNA fila por su id, que es justo lo contrario de reemplazar la lista.
+  // Todo lo demás sí llega con su lista entera y sin ella no hay nada que
+  // guardar.
+  const SIN_LISTA = ["lastBackup", "waitlistEntry"];
+  if (!SIN_LISTA.includes(collection) && !Array.isArray(items) && typeof items !== "object") {
     return res.status(400).json({ ok: false, reason: "invalid_input", message: "Falta la lista." });
   }
 
@@ -105,26 +107,51 @@ export default async function handler(req, res) {
         break;
       }
 
-      case "waitlist": {
-        await wipe(supabase, "waitlist");
-        const rows = items
-          .map((w) => ({
-            customer_name: cleanName(w.name),
-            customer_phone: cleanPhone(w.phone),
-            service_id: w.service || null,
-            preferred_date: w.dateKey || null,
-            // Esta colección se guarda ENTERA: se borra la tabla y se vuelve a
-            // escribir. Si estos dos campos no viajasen de vuelta, quitar a una
-            // persona de la lista con la X borraría la franja de TODAS las
-            // demás. Cualquier columna nueva de `waitlist` tiene que entrar
-            // aquí el mismo día que se añade.
-            preferred_slot: normalizarFranja(w.preferredSlot),
-            any_date: w.anyDate === true,
-            note: typeof w.note === "string" ? w.note.trim().slice(0, 280) : "",
-          }))
-          .filter((w) => w.customer_name && isValidPhone(w.customer_phone));
-        if (rows.length) await insert(supabase, "waitlist", rows);
-        break;
+      // La lista de espera se toca de UNA EN UNA, por su id, y nunca entera.
+      //
+      // Antes era una colección más: se borraba la tabla y se reescribía con lo
+      // que tuviera el navegador. Eso regeneraba los `id` y los `created_at` de
+      // TODOS, así que quitar a una persona con la X le cambiaba a las demás la
+      // antigüedad —que es lo que decide a quién se llama primero— y con ella
+      // la marca de avisado. Quitar a uno no puede reescribir a los otros seis.
+      //
+      // Dos acciones y ninguna más: dejar constancia de que se le ha escrito
+      // por un hueco, y sacar a alguien de la lista. Ninguna de las dos toca
+      // nombre, teléfono, franja ni "cualquier día": lo que dijo el cliente al
+      // apuntarse sólo lo escribe el propio cliente, por `/api/waitlist`.
+      case "waitlistEntry": {
+        const id = Number(body.id);
+        if (!Number.isInteger(id) || id <= 0) {
+          return res.status(400).json({ ok: false, reason: "invalid_input", message: "Falta la entrada de la lista." });
+        }
+
+        if (body.action === "remove") {
+          const { error } = await supabase.from("waitlist").delete().eq("id", id);
+          if (error) throw new Error(error.message);
+          break;
+        }
+
+        if (body.action === "notified") {
+          // El hueco por el que se le avisó, 'YYYY-MM-DD HH:MM'. Se valida
+          // aquí aunque el panel lo componga: cualquiera con el pase puede
+          // llamar a esta ruta a mano, y una cadena rara no tiene por qué
+          // acabar en la columna. Lo que no encaje se guarda como null — la
+          // marca sigue puesta, sin hueco al lado.
+          const slot = typeof body.slot === "string" && /^\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d$/.test(body.slot)
+            ? body.slot
+            : null;
+          // La hora la pone el reloj del SERVIDOR y no llega en la petición,
+          // por lo mismo que la fecha de la última copia: si viniera de fuera,
+          // "avisado el martes" lo decidiría quien llama.
+          const { error } = await supabase
+            .from("waitlist")
+            .update({ notified_at: new Date().toISOString(), notified_slot: slot })
+            .eq("id", id);
+          if (error) throw new Error(error.message);
+          break;
+        }
+
+        return res.status(400).json({ ok: false, reason: "invalid_input", message: "No sé qué hacer con esa entrada." });
       }
 
       // Cuándo se descargó la última copia. Es lo ÚNICO que escribe la
@@ -174,7 +201,6 @@ const WIPE_FILTER = {
   schedule_ranges: (q) => q.gt("id", 0),
   blocked_ranges:  (q) => q.gt("id", 0),
   vacation_ranges: (q) => q.gt("id", 0),
-  waitlist:        (q) => q.gt("id", 0),
   blocked_days:    (q) => q.gte("block_date", "1900-01-01"),
   festivos:        (q) => q.gte("festivo_date", "1900-01-01"),
 };

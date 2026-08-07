@@ -7,7 +7,11 @@ import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronL
 import { DIAS_MAX_RESERVA, claveDeDia } from "../shared/plazo-reserva.js";
 // La raya entre mañana y tarde no es un número escrito aquí: sale del horario
 // que Félix tiene puesto, y del mismo sitio que lo leerá el servidor.
-import { corteDeMediodia } from "../shared/franja-horaria.js";
+// `grupoDeEspera` y `esperaVigente` deciden a quién le sirve un hueco que se
+// acaba de liberar y en qué orden se le enseña. El servidor cuenta con las
+// mismas: el número del aviso al móvil y lo que se ve en el panel tienen que
+// salir de la misma regla, o "hay 2 esperando" enseñaría a 3.
+import { corteDeMediodia, grupoDeEspera, esperaVigente } from "../shared/franja-horaria.js";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
@@ -633,8 +637,48 @@ export default function FelixBarberiaApp() {
   async function setBlockedDays(next)    { return saveCollection("blockedDays", next, setBlockedDaysState, blockedDays); }
   async function setFestivos(next)       { return saveCollection("festivos", next, setFestivosState, festivos); }
   async function setVacationRanges(next) { return saveCollection("vacationRanges", next, setVacationRangesState, vacationRanges); }
-  async function setWaitlist(next)       { return saveCollection("waitlist", next, setWaitlistState, waitlist); }
   async function setSchedule(next)       { return saveCollection("schedule", next, setScheduleState, schedule); }
+
+  // La lista de espera NO se guarda entera, y por eso no tiene un `setWaitlist`
+  // como las demás colecciones. Lo tuvo: mandaba la lista completa y el
+  // servidor borraba la tabla y la reescribía, así que quitar a una persona con
+  // la X le regeneraba a todas las demás el id y la fecha de alta —la
+  // antigüedad que decide a quién se llama primero— y borraba la marca de
+  // avisado. Aquí se toca una fila, por su id, y las otras seis no se enteran.
+  async function escribirEntradaEspera(id, cuerpo, aplicar) {
+    if (blockedByMaintenance()) return false;
+    const previo = waitlist;
+    setWaitlistState(aplicar(previo));
+    try {
+      await apiSend("/api/admin", "POST", { collection: "waitlistEntry", id, ...cuerpo }, { auth: true });
+      return true;
+    } catch (e) {
+      // Se deshace en pantalla, igual que en `saveCollection`: nunca queda a la
+      // vista algo que la base de datos no aceptó.
+      setWaitlistState(previo);
+      if (e.status === 401 || e.status === 503) {
+        clearAdminSession();
+        setAdminEpoch((n) => n + 1);
+      }
+      if (typeof window !== "undefined") window.alert(`No se ha podido guardar: ${e.message}`);
+      return false;
+    }
+  }
+
+  // "Ya le he escrito por este hueco". No le saca de la lista a propósito: si
+  // no contesta o no le viene bien, tiene que seguir ahí para el siguiente.
+  // La fecha real la pone el servidor; la de aquí es sólo para que la marca
+  // aparezca sin esperar a releer.
+  async function markWaitlistNotified(id, slot) {
+    return escribirEntradaEspera(id, { action: "notified", slot }, (prev) =>
+      prev.map((w) => (w.id === id ? { ...w, notifiedAt: new Date().toISOString(), notifiedSlot: slot } : w))
+    );
+  }
+
+  // La X: se resolvió, o ya no interesa. Borra una fila y nada más.
+  async function removeWaitlistEntry(id) {
+    return escribirEntradaEspera(id, { action: "remove" }, (prev) => prev.filter((w) => w.id !== id));
+  }
 
   // Apuntarse a la lista de espera lo hace un CLIENTE, no Félix, así que va
   // por su propia ruta pública — que solo sabe añadir una fila. El panel sigue
@@ -790,9 +834,15 @@ export default function FelixBarberiaApp() {
   // Cancela. No borra: marca. Así queda el rastro de que la cita existió.
   // No se toca el estado a mano: se relee, porque lo que hay en memoria son
   // bloques sin id y no habría por dónde encontrar el que sobra.
-  async function cancelAppointment(id) {
+  // `auth` sólo lo pone el PANEL. No abre ninguna puerta —cancelar no la
+  // necesita, se cancela con el id— sino que le dice al servidor quién está
+  // cancelando: `tellShop` no avisa de lo que hace el propio Félix, y sin el
+  // pase su cancelación le llegaba al móvil como si la hubiera hecho un
+  // cliente. Un cliente cancelando por la web nunca manda pase, y ése es el
+  // que sí tiene que sonar.
+  async function cancelAppointment(id, { auth = false } = {}) {
     if (blockedByMaintenance()) throw new Error(MAINTENANCE_MSG);
-    await apiSend("/api/appointments", "PATCH", { id, status: "cancelled" });
+    await apiSend("/api/appointments", "PATCH", { id, status: "cancelled" }, { auth });
     await refreshAppointments();
   }
 
@@ -887,7 +937,7 @@ export default function FelixBarberiaApp() {
     setMenuOpen(false);
   }
 
-  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, setWaitlist, joinWaitlist, schedule, setSchedule };
+  const shared = { services, setServices, barbers, setBarbers, appointments, holds, latestHoldsRef, createHold, releaseHold, createAppointment, cancelAppointment, cancelAppointmentGroup, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedRanges, setBlockedRanges, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, joinWaitlist, schedule, setSchedule };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif", background: "#0B0B0A", minHeight: "100vh", color: BONE }}>
@@ -2315,6 +2365,151 @@ const FRANJA_PANEL = {
   cualquiera: "Le da igual la hora",
 };
 
+// Lo que pedía alguien que no encaja, dicho en una línea para la etiqueta del
+// tercer grupo: "pedía el jueves", "pedía por la mañana".
+function loQuePedia(w) {
+  const partes = [];
+  if (w.dateKey) {
+    const d = dateFromKey(w.dateKey);
+    partes.push(d ? `pedía el ${DIAS[d.getDay()].toLowerCase()} ${d.getDate()}` : `pedía el ${w.dateKey}`);
+  }
+  if (w.preferredSlot === "manana") partes.push("por la mañana");
+  else if (w.preferredSlot === "tarde") partes.push("por la tarde");
+  return partes.join(", ") || "pedía otra cosa";
+}
+
+// El número al que abre WhatsApp. Los teléfonos se guardan en dígitos y sin
+// prefijo —un móvil español son nueve—, y `wa.me` los quiere internacionales:
+// sin el 34 delante abre un chat con un número que no existe. Uno que ya venga
+// con prefijo (hay alguno no español en los datos) se deja tal cual.
+function waMeNumero(phone) {
+  const digitos = String(phone || "").replace(/\D/g, "");
+  return digitos.length === 9 ? `34${digitos}` : digitos;
+}
+
+// El día de un hueco, dicho como se lo diría Félix a un cliente por WhatsApp.
+function diaHumano(dia) {
+  const d = dateFromKey(dia);
+  return d ? `${DIAS[d.getDay()].toLowerCase()} ${d.getDate()} de ${MESES[d.getMonth()]}` : dia;
+}
+
+// Una persona de la lista de espera, con lo que hace falta para llamarla o
+// escribirle. La usan las DOS listas —la del día y la de Ajustes— para que la
+// marca de avisado, el teléfono y la X se lean igual en las dos.
+//
+// El mensaje de WhatsApp va escrito pero no enviado: `wa.me` abre el chat con
+// el texto puesto en la caja, y Félix lo edita si quiere antes de darle a
+// enviar. Nunca se manda nada solo, que es justamente lo que se descartó.
+function EsperaRow({ w, services, hueco, etiqueta, onNotified, onRemove }) {
+  const svc = services.find((s) => s.id === w.service);
+  const numero = waMeNumero(w.phone);
+  const mensaje = hueco && hueco.hora
+    ? `Hola ${w.name}, soy Félix de Félix Barbería. Se ha quedado libre el ${diaHumano(hueco.dia)} a las ${hueco.hora}. Si te viene bien, dímelo y te lo guardo.`
+    : `Hola ${w.name}, soy Félix de Félix Barbería. Se ha quedado libre un hueco${hueco ? ` el ${diaHumano(hueco.dia)}` : ""}. Si te viene bien, dímelo y te lo guardo.`;
+  // El hueco por el que se le avisa queda apuntado tal cual, para que la marca
+  // diga POR QUÉ hueco fue y no sólo que se le escribió alguna vez.
+  const marca = hueco && hueco.hora ? `${hueco.dia} ${hueco.hora}` : null;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {w.name}
+          {w.anyDate && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: "1px 5px" }}>cualquier día</span>}
+        </div>
+        <div style={{ fontSize: 11, color: SMOKE }}>{svc?.name || "Sin servicio"} · {w.phone}</div>
+        {/* Qué dijo cuando se apuntó. "No lo dijo" no es "me da igual": los que
+            se apuntaron antes de que se preguntase están en el primer caso. */}
+        <div style={{ fontSize: 11, color: w.preferredSlot ? BONE : SMOKE, marginTop: 2 }}>
+          {w.preferredSlot ? FRANJA_PANEL[w.preferredSlot] : <em style={{ opacity: 0.75 }}>No dijo a qué hora puede</em>}
+        </div>
+        {etiqueta && <div style={{ fontSize: 11, color: SMOKE, marginTop: 2 }}>{etiqueta}</div>}
+        {w.note && <div style={{ fontSize: 11, color: SMOKE, marginTop: 2, fontStyle: "italic" }}>«{w.note}»</div>}
+        {/* Ya se le escribió. Sigue en la lista a propósito: si no contestó o
+            no le venía bien, tiene que volver a salir en el siguiente hueco. */}
+        {w.notifiedAt && (
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: GOLD, marginTop: 3 }}>
+            ✓ Avisado{w.notifiedSlot ? ` del hueco del ${w.notifiedSlot.slice(8, 10)}/${w.notifiedSlot.slice(5, 7)} a las ${w.notifiedSlot.slice(11, 16)}` : ""}
+          </div>
+        )}
+      </div>
+      {numero && (
+        <a
+          href={`https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => { if (onNotified) onNotified(w.id, marca); }}
+          className="ghost-btn"
+          style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, textDecoration: "none", color: BONE, flexShrink: 0 }}
+        >WhatsApp</a>
+      )}
+      <a href={`tel:${String(w.phone).replace(/\s/g, "")}`} className="ghost-btn" style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, textDecoration: "none", color: BONE, flexShrink: 0 }}>Llamar</a>
+      {onRemove && (
+        <button onClick={() => onRemove(w.id)} style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", flexShrink: 0 }}><X size={14} /></button>
+      )}
+    </div>
+  );
+}
+
+// Quién espera para ESTE día, en la propia vista del día del panel.
+//
+// Antes la lista vivía sólo en Ajustes, así que la promesa que la web le hace
+// al cliente —"si se libera un hueco te avisamos"— dependía de que Félix se
+// acordase de ir a mirarla. Aquí sale sola, en el sitio donde acaba de
+// quedarse el hueco libre.
+//
+// Los tres grupos y su orden salen de `shared/franja-horaria.js`, que es lo
+// mismo que cuenta el servidor para el aviso del móvil. Dentro de cada grupo
+// manda quién se apuntó antes.
+function EsperaDelDia({ dia, hueco, waitlist, services, schedule, onNotified, onRemove }) {
+  const grupos = useMemo(() => {
+    const hoy = claveDeDia();
+    const d = dateFromKey(dia);
+    const bloques = d ? schedule[d.getDay()] || [] : [];
+    const hora = hueco && hueco.hora ? hueco.hora : null;
+    const g = { 1: [], 2: [], 3: [] };
+    // Las entradas cuyo día ya pasó no salen ni cuentan: una lista con
+    // caducados haría que "hay 2 esperando" mintiese.
+    for (const w of waitlist.filter((w) => esperaVigente(w, hoy))) {
+      g[grupoDeEspera(w, { dia, hora, bloques })].push(w);
+    }
+    // Quien lleva más tiempo esperando, primero. `createdAt` viene del
+    // servidor; una entrada sin él (recién apuntada desde esta misma pantalla)
+    // se va al final, que es donde le toca.
+    const porAntiguedad = (a, b) => String(a.createdAt || "9999").localeCompare(String(b.createdAt || "9999"));
+    return { encajan: [...g[1].sort(porAntiguedad), ...g[2].sort(porAntiguedad)], resto: g[3].sort(porAntiguedad) };
+  }, [dia, hueco, waitlist, schedule]);
+
+  // Sin nadie a quien ofrecérselo no se pinta nada. Es la misma regla que el
+  // aviso del móvil: si no encaja nadie, la lista de espera no ocupa sitio.
+  // Los del tercer grupo se enseñan, pero no son motivo para abrir la sección.
+  if (grupos.encajan.length === 0) return null;
+
+  return (
+    <div className="card" style={{ borderRadius: 12, padding: 14, marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 4 }}>
+        Esperando para este día ({grupos.encajan.length})
+      </div>
+      <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 8 }}>
+        {hueco && hueco.hora
+          ? `Se ha quedado libre a las ${hueco.hora}. Los primeros son los que encajan con esa hora.`
+          : "Ordenados por quién encaja mejor y por quién se apuntó antes."}
+      </div>
+      {grupos.encajan.map((w) => (
+        <EsperaRow key={w.id} w={w} services={services} hueco={hueco || { dia, hora: null }} onNotified={onNotified} onRemove={onRemove} />
+      ))}
+      {grupos.resto.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: SMOKE, margin: "10px 0 2px" }}>No encajan, por si te interesa tirar de ellos:</div>
+          {grupos.resto.map((w) => (
+            <EsperaRow key={w.id} w={w} services={services} hueco={hueco || { dia, hora: null }} etiqueta={loQuePedia(w)} onNotified={onNotified} onRemove={onRemove} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function WaitlistJoin({ dateKey: dk, dateLabel, service, barberId, joinWaitlist, dayBlocks }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -2723,7 +2918,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, setWaitlist, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentPayment, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -2748,6 +2943,16 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // El destino se aplica UNA vez. Sin esto, cada relectura de las citas
   // volvería a abrir la ficha que Félix acaba de cerrar.
   const avisoAplicado = useRef(false);
+
+  // El hueco que se acaba de quedar libre: { dia, hora }. Se pone al llegar
+  // desde un aviso del móvil y también cuando Félix cancela una cita desde el
+  // propio panel — el hueco libre es el mismo, lo haya hecho quien lo haya
+  // hecho. Es lo que ordena la lista de espera del día por franja y lo que le
+  // pone la hora al mensaje de WhatsApp.
+  //
+  // Sin hueco concreto la sección se sigue enseñando: entonces no hay ninguna
+  // hora que comparar, así que nadie queda descolgado por franja.
+  const [huecoLibre, setHuecoLibre] = useState(null);
 
   useEffect(() => {
     if (!authed) return;
@@ -2776,6 +2981,12 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     setTab("dia");
     const dia = dateFromKey(avisoDestino.dia);
     if (dia) setCursorDate(dia);
+    // Llegar desde el aviso de una cancelación es llegar a un hueco libre: la
+    // lista de espera de ese día se ordena por esa hora y queda a la vista sin
+    // buscar nada, que es lo que el aviso prometía en la pantalla de bloqueo.
+    if (avisoDestino.tipo === "cancelada" && avisoDestino.dia) {
+      setHuecoLibre({ dia: avisoDestino.dia, hora: avisoDestino.hora || null });
+    }
 
     let vivo = true;
     (async () => {
@@ -2801,6 +3012,14 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   function apptsForDate(d) {
     return appointments.filter((a) => a.dateKey === dateKey(d)).sort((a, b) => toMin(a.time) - toMin(b.time));
   }
+
+  // El hueco liberado, sólo si es del día que se está mirando. Al cambiar de
+  // día deja de aplicar: la hora de una cancelación del jueves no ordena la
+  // lista del viernes.
+  //
+  // Una cancelación de GRUPO deja un solo hueco aquí, no uno por persona: es
+  // un { dia, hora } y la sección se pinta una vez.
+  const esperaDelDia = huecoLibre && huecoLibre.dia === dateKey(cursorDate) ? huecoLibre : null;
 
   const weekDays = useMemo(() => {
     const start = addDays(cursorDate, -cursorDate.getDay());
@@ -3051,12 +3270,19 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   async function cancelAppt(id) {
     const appt = appointments.find((a) => a.id === id);
     try {
-      await cancelAppointment(id);
+      // Con pase: lo está cancelando Félix desde su panel, así que no tiene que
+      // sonarle el móvil por algo que acaba de hacer él.
+      await cancelAppointment(id, { auth: true });
     } catch (e) {
       window.alert(`No se ha podido cancelar: ${e.message}`);
       return;
     }
     setSelectedAppt(null);
+    // Cancelar desde aquí libera el mismo hueco que cancelar desde la web, así
+    // que la lista de espera de ese día aparece igual. Lo que no pasa es que
+    // suene el móvil: lo acaba de hacer él, y ésa es la regla que ya rige
+    // todos los avisos.
+    if (appt && appt.dateKey) setHuecoLibre({ dia: appt.dateKey, hora: appt.time || null });
     // El panel tiene su propia copia de las citas: hay que releerla, la
     // pública no le sirve.
     await refreshAppointments();
@@ -3105,10 +3331,6 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     } catch (e) {
       window.alert(`No se ha podido guardar: ${e.message}`);
     }
-  }
-
-  function removeWaitlistEntry(id) {
-    setWaitlist(waitlist.filter((w) => w.id !== id));
   }
 
   async function addManualAppt(data) {
@@ -3220,6 +3442,21 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   <button onClick={() => setAvisoNota(null)} style={{ background: "none", border: "none", color: SMOKE, fontSize: 11.5, cursor: "pointer", flexShrink: 0 }}>Cerrar</button>
                 </div>
               )}
+              {/* Quién espera para este día. Cuando se acaba de liberar un
+                  hueco va ENCIMA de la agenda: se ha llegado aquí desde el
+                  aviso —o de cancelar— y lo que hace falta es a quién llamar,
+                  no la lista de citas. El resto de los días va debajo, para no
+                  empujar la agenda hacia abajo sin motivo.
+
+                  Nada de esto antes de `loaded` y `dataLoaded`: sin el horario
+                  no hay raya entre mañana y tarde, y sin los datos del panel la
+                  lista está vacía porque no ha llegado, no porque no haya
+                  nadie. */}
+              {loaded && dataLoaded && esperaDelDia && (
+                <div style={{ marginTop: 14 }}>
+                  <EsperaDelDia dia={dateKey(cursorDate)} hueco={esperaDelDia} waitlist={waitlist} services={services} schedule={schedule} onNotified={markWaitlistNotified} onRemove={removeWaitlistEntry} />
+                </div>
+              )}
               <div style={{ margin: "14px 0" }}>
                 {!dataLoaded ? (
                   <LoadingRegion label="Cargando las citas del día">
@@ -3231,6 +3468,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   <EmptyState text="Sin citas este día." />
                 ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} onSetPago={(metodo) => setPago(a.id, metodo)} />)}
               </div>
+              {loaded && dataLoaded && !esperaDelDia && (
+                <EsperaDelDia dia={dateKey(cursorDate)} hueco={null} waitlist={waitlist} services={services} schedule={schedule} onNotified={markWaitlistNotified} onRemove={removeWaitlistEntry} />
+              )}
               {/* El dinero del día, debajo de la lista: primero quién viene,
                   que es para lo que se abre esta pantalla, y después la caja.
                   En un día que todavía no ha llegado no se enseña — no hay
@@ -3363,34 +3603,22 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               {waitlist.length > 0 && (
                 <div className="card" style={{ borderRadius: 12, padding: 14 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 10 }}>Lista de espera ({waitlist.length})</div>
-                  {[...waitlist].sort((a, b) => (a.dateKey < b.dateKey ? -1 : 1)).map((w) => {
-                    const svc = services.find((s) => s.id === w.service);
-                    return (
-                      <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600 }}>
-                            {w.name} · {w.dateKey || "sin día"}
-                            {/* Quien marcó "cualquier día" se distingue de quien
-                                pidió un día concreto: a uno se le puede ofrecer
-                                cualquier hueco y al otro no. El día sigue ahí
-                                porque dice por dónde entró. */}
-                            {w.anyDate && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 6, padding: "1px 5px" }}>cualquier día</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: SMOKE }}>{svc?.name} · {w.phone}</div>
-                          {/* La franja, y "no lo dijo" cuando no hay ninguna.
-                              Los que se apuntaron antes de que se preguntase
-                              están en ese caso, y no es lo mismo que "me da
-                              igual": ésos sí lo dijeron. */}
-                          <div style={{ fontSize: 11, color: w.preferredSlot ? BONE : SMOKE, marginTop: 2 }}>
-                            {w.preferredSlot ? FRANJA_PANEL[w.preferredSlot] : <em style={{ opacity: 0.75 }}>No dijo a qué hora puede</em>}
-                          </div>
-                          {w.note && <div style={{ fontSize: 11, color: SMOKE, marginTop: 2, fontStyle: "italic" }}>«{w.note}»</div>}
-                        </div>
-                        <a href={`tel:${w.phone.replace(/\s/g, "")}`} className="ghost-btn" style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, textDecoration: "none", color: BONE }}>Llamar</a>
-                        <button onClick={() => removeWaitlistEntry(w.id)} style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer" }}><X size={14} /></button>
-                      </div>
-                    );
-                  })}
+                  {/* La lista COMPLETA, incluida la gente cuyo día ya pasó: es
+                      el sitio donde se administra, y para quitar a alguien hay
+                      que poder verlo. La que ordena y filtra es la del día.
+                      El hueco es el día que pidió cada uno, así que el mensaje
+                      de WhatsApp sale con ese día y sin hora. */}
+                  {[...waitlist].sort((a, b) => (String(a.dateKey || "9999") < String(b.dateKey || "9999") ? -1 : 1)).map((w) => (
+                    <EsperaRow
+                      key={w.id}
+                      w={w}
+                      services={services}
+                      hueco={w.dateKey ? { dia: w.dateKey, hora: null } : null}
+                      etiqueta={w.dateKey ? `Pidió el ${w.dateKey}` : "Sin día concreto"}
+                      onNotified={markWaitlistNotified}
+                      onRemove={removeWaitlistEntry}
+                    />
+                  ))}
                   <p style={{ fontSize: 11, color: SMOKE, marginTop: 8 }}>Cuando resuelvas a un cliente (le llamas y le das hueco, o ya no lo necesita), quítalo de la lista con la X.</p>
                 </div>
               )}
