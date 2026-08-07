@@ -162,6 +162,18 @@ export function waitlistOut(r) {
     note: r.note,
     preferredSlot: r.preferred_slot ?? null,
     anyDate: r.any_date === true,
+    // Cuándo se apuntó. Es lo que decide el orden dentro de cada grupo cuando
+    // se libera un hueco —manda quien lleva esperando más—, y por eso sale
+    // aunque el panel no lo pinte: sin él, el orden se lo tendría que inventar
+    // la pantalla. `admin-data` ya lo ordena por `created_at`; esto lo hace
+    // sobrevivir a cualquier reordenación posterior.
+    createdAt: r.created_at,
+    // La marca de "ya le escribí por este hueco". `null` es "nunca avisado",
+    // y va siempre para que el panel no tenga que distinguir "no lo sé" de
+    // "no". No sale de aquí: como el nombre y el teléfono, vive detrás de la
+    // clave y nunca viaja en un aviso.
+    notifiedAt: r.notified_at ?? null,
+    notifiedSlot: r.notified_slot ?? null,
   };
 }
 

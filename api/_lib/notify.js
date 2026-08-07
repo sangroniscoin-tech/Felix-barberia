@@ -21,8 +21,28 @@ export function bookingNotice(appointments, serviceNames) {
   };
 }
 
-export function cancellationNotice(appointments, serviceNames) {
+// `esperando` es a cuánta gente de la lista de espera le sirve el hueco que
+// esta cancelación acaba de dejar libre. Con cero —que es lo que llega si nadie
+// encaja, y también si la consulta falla— el aviso es exactamente el de antes,
+// palabra por palabra.
+//
+// Va **un número y nada más**. Ni un nombre ni un teléfono: esto se pinta en la
+// pantalla de bloqueo de un móvil. "Hay 2 esperando" es todo lo que hace falta
+// para decidir si merece la pena abrir el panel; quién son se ve allí, con la
+// clave.
+export function cancellationNotice(appointments, serviceNames, esperando = 0) {
   const n = appointments.length;
+  const cuantos = Number.isInteger(esperando) && esperando > 0 ? esperando : 0;
+  if (cuantos > 0) {
+    return {
+      // Un asunto distinto del de siempre, que es lo que se pidió: que el aviso
+      // de "se ha liberado un hueco y tienes a quien llamar" se distinga de un
+      // vistazo del de "alguien canceló".
+      subject: `Hueco libre · ${cuantos === 1 ? "1 esperando" : `${cuantos} esperando`}`,
+      body: `${cuerpo(appointments, serviceNames)} · ${cuantos === 1 ? "hay 1 persona" : `hay ${cuantos} personas`} en la lista de espera`,
+      url: destino(appointments, "cancelada"),
+    };
+  }
   return {
     subject: n > 1 ? `Anulada una reserva de ${n} personas` : "Un cliente canceló su cita",
     body: cuerpo(appointments, serviceNames),

@@ -13,6 +13,7 @@ import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { motivoFueraDePlazo } from "../shared/plazo-reserva.js";
 import { bookingNotice, cancellationNotice } from "./_lib/notify.js";
+import { cuantosEsperanPor } from "./_lib/espera.js";
 import { sendPush } from "./_lib/push.js";
 
 // Hace sonar el móvil de Félix. Nunca lanza y nunca se le deja romper la
@@ -34,8 +35,20 @@ async function tellShop(supabase, appointments, kind, req) {
     const ids = [...new Set(appointments.map((a) => a.service))];
     const { data } = await supabase.from("services").select("id,name").in("id", ids);
     const names = Object.fromEntries((data || []).map((s) => [s.id, s.name]));
+    // Una cancelación deja un hueco libre, y ese hueco puede servirle a alguien
+    // de la lista de espera. Se cuenta UNA vez, por DÍA y por la hora en que
+    // empieza el hueco: una reserva de tres personas son tres filas del mismo
+    // día seguidas, y no son tres huecos que contar por separado.
+    //
+    // `cuantosEsperanPor` nunca lanza y devuelve 0 si algo falla, así que un
+    // problema contando nunca deja a Félix sin el aviso de siempre.
+    let esperando = 0;
+    if (kind === "cancelled") {
+      const primera = appointments.slice().sort((a, b) => String(a.time).localeCompare(String(b.time)))[0];
+      esperando = await cuantosEsperanPor(supabase, { dia: primera.dateKey, hora: primera.time });
+    }
     const notice = kind === "cancelled"
-      ? cancellationNotice(appointments, names)
+      ? cancellationNotice(appointments, names, esperando)
       : bookingNotice(appointments, names);
     // La dirección la pone el propio aviso: lleva al panel, al día y la hora
     // de esa cita. Ver `notify.js` — no lleva el id, y no lleva a nadie por
