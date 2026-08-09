@@ -83,6 +83,12 @@ acceptance criteria on every change from here on:
   se esconde a nadie. Cada uno con el WhatsApp ya escrito y el botón de llamar. **Avisa él,
   no el sistema**, y quien recibe el aviso queda marcado pero **no sale de la lista**: si no
   contesta, vuelve a salirle en el siguiente hueco.
+- **Cuando es él quien cancela, se le ofrece avisar a quien se queda sin cita**, en el
+  momento y en la misma pantalla: una disculpa con el día y la hora, y una puerta abierta
+  —«escríbeme y te busco otro hueco»—, en el WhatsApp de esa persona. **Escrito, no
+  enviado**, como todo lo que sale de este panel. No se pregunta el motivo, y no se apunta
+  si avisó: la cita queda cancelada igual. Sin teléfono —los datos viejos se purgan— la
+  ventana lo dice en vez de ofrecer un botón que no lleva a ningún sitio.
 - Everything is in Spanish, for customers in Zaragoza. It is installable as a phone app
   (PWA) and is used mostly on phones.
 - Services and prices live in the data store, not the code, and Félix can change them

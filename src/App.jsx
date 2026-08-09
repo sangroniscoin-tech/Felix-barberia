@@ -2955,6 +2955,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // hora que comparar, así que nadie queda descolgado por franja.
   const [huecoLibre, setHuecoLibre] = useState(null);
 
+  // La cita que Félix acaba de cancelar, para ofrecerle avisar a quien se queda
+  // sin ella. Se rellena SÓLO cuando la cancelación ya está guardada: ofrecer
+  // avisar de algo que no ha ocurrido es peor que no ofrecer nada.
+  const [avisarCancelada, setAvisarCancelada] = useState(null);
+
   useEffect(() => {
     if (!authed) return;
     let vivo = true;
@@ -3312,6 +3317,17 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       return;
     }
     setSelectedAppt(null);
+    // Quien se queda sin cita se entera porque Félix se lo dice. Antes se le
+    // mandaba un correo desde aquí, y dejó de irse: el script de Google no
+    // acepta destinatario —lo lleva fijo dentro, que es lo que impide que
+    // cualquiera lo use para escribir a quien quiera—, así que la cita se
+    // anulaba y el cliente se presentaba a su hora. Ahora se le ofrece el aviso
+    // en el momento, por el mismo camino que la lista de espera: WhatsApp con
+    // el texto escrito y sin enviar.
+    //
+    // Va DESPUÉS del PATCH y sólo si no falló: la salida de error de arriba se
+    // vuelve sin llegar aquí.
+    if (appt) setAvisarCancelada(appt);
     // Cancelar desde aquí libera el mismo hueco que cancelar desde la web, así
     // que la lista de espera de ese día aparece igual. Lo que no pasa es que
     // suene el móvil: lo acaba de hacer él, y ésa es la regla que ya rige
@@ -3320,11 +3336,6 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     // El panel tiene su propia copia de las citas: hay que releerla, la
     // pública no le sirve.
     await refreshAppointments();
-    // Antes se le mandaba un correo al cliente desde aquí. Ya no: el script de
-    // Google no acepta destinatario —lo lleva fijo dentro, que es lo que impide
-    // que cualquiera lo use para escribir a quien quiera— así que avisar al
-    // cliente necesita su propia solución. Hasta entonces, Félix llama o manda
-    // un WhatsApp, que es lo que hacía de todas formas.
   }
 
   // Un único camino para marcar si vino o no, lo pidan la ficha o la lista del
@@ -3718,6 +3729,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           )}
         </>
       )}
+
+      {/* Se monta encima de la lista de espera del día, que la cancelación
+          acaba de destapar. Ése es el orden bueno: primero se avisa a quien se
+          queda sin cita, y después se mira a quién se le ofrece el hueco. */}
+      {avisarCancelada && <AvisarCanceladaModal appt={avisarCancelada} onClose={() => setAvisarCancelada(null)} />}
 
       {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
       {/* El modal recibe la agenda tal cual la tiene el panel: los huecos se
@@ -4728,6 +4744,79 @@ function ModalShell({ title, onClose, children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+// Lo que se le escribe a quien se queda sin cita. Una disculpa y una puerta
+// abierta: lo que se decidió es que el mensaje le pida que escriba, no que se
+// despida. El motivo no se pregunta —sería un toque más en cada cancelación—
+// y quien quiera darlo lo escribe en WhatsApp antes de enviar.
+//
+// Sin nombre se saluda sin nombre: los datos de una cita vieja se purgan, y
+// "Hola Datos borrados" es peor que "Hola".
+function mensajeCancelacion(appt) {
+  const nombre = String(appt.name || "").trim();
+  const hola = nombre ? `Hola ${nombre}` : "Hola";
+  const cuando = appt.dateKey
+    ? ` del ${diaHumano(appt.dateKey)}${appt.time ? ` a las ${appt.time}` : ""}`
+    : "";
+  return `${hola}, soy Félix de Félix Barbería. Siento avisarte de que he tenido que anular tu cita${cuando}. Escríbeme y te busco otro hueco.`;
+}
+
+// La cita ya está cancelada cuando esto sale. La ventana no cancela nada ni
+// manda nada: sólo abre el chat de esa persona con el mensaje puesto en la
+// caja, igual que el WhatsApp de la lista de espera. Félix lo lee, lo cambia si
+// quiere, y es él quien le da a enviar.
+//
+// Sin teléfono no hay botón. Se puede quedar una cita sin él —los datos se
+// purgan— y un botón que abriese un chat con un número vacío sería un botón
+// que miente.
+function AvisarCanceladaModal({ appt, onClose }) {
+  const numero = waMeNumero(appt.phone);
+  const mensaje = mensajeCancelacion(appt);
+  const cuando = appt.dateKey
+    ? `${diaHumano(appt.dateKey)}${appt.time ? ` a las ${appt.time}` : ""}`
+    : appt.time || "";
+
+  return (
+    <ModalShell title="Cita cancelada" onClose={onClose}>
+      <div style={{ fontSize: 13, color: BONE, lineHeight: 1.5 }}>
+        Cancelada la cita de <strong>{shownName(appt)}</strong>{cuando ? <> del {cuando}</> : null}.
+      </div>
+      {numero ? (
+        <>
+          <div style={{ fontSize: 12, color: SMOKE, marginTop: 10 }}>
+            ¿Quieres avisarle? Se abre su WhatsApp con este mensaje escrito. No se manda
+            solo: lo puedes cambiar antes de enviarlo.
+          </div>
+          <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "rgba(255,255,255,0.06)", fontSize: 12.5, color: BONE, lineHeight: 1.5, fontStyle: "italic" }}>
+            «{mensaje}»
+          </div>
+          <a
+            href={`https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onClose}
+            className="gold-btn"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 13, borderRadius: 10, fontSize: 13, fontWeight: 700, textDecoration: "none", marginTop: 14 }}
+          >
+            <MessageCircle size={16} /> Avisar por WhatsApp
+          </a>
+          <button onClick={onClose} className="ghost-btn" style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
+            Ahora no
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: SMOKE, marginTop: 10 }}>
+            No tenemos su teléfono, así que desde aquí no se le puede avisar.
+          </div>
+          <button onClick={onClose} className="ghost-btn" style={{ width: "100%", marginTop: 14, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
+            Cerrar
+          </button>
+        </>
+      )}
+    </ModalShell>
   );
 }
 
