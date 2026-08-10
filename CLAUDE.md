@@ -77,7 +77,11 @@ and never committed.
 - There is **no custom domain**, so there is no registrar, no DNS zone and no mail records
   to carry across. Confirm this is still true before proposing anything that touches DNS.
 - Supabase API: `https://ozosjyulagynyxhnvyxr.supabase.co`
-- The org holds exactly one project. Confirm the ref before applying any migration.
+- The org holds **two** projects, and only the ref above is this app's. The other —
+  `inventario-come-aqui-24-horas`, ref `dwuxqbsdgyhhmsuquvra`, region `eu-west-3` — belongs
+  to nothing in this repository and is not referenced anywhere in it. Confirm the ref
+  before applying any migration: the connector lists both, and picking the wrong one
+  writes to a database nobody is watching.
 
 ## Architecture
 

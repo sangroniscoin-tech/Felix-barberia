@@ -513,6 +513,11 @@ function buildICSDataUri({ start, end, serviceName }) {
 // como horas ocupadas hasta que respondía /api/bootstrap. Fuera: lo que no ha
 // llegado del servidor no se pinta.
 
+// Lo que devuelve la carga del panel cuando la sesión ya no vale. No es un
+// dato y no es un error: es "vuelve a escribir la clave", que ya está en
+// marcha. Quien lo recibe no reintenta y no enciende ningún aviso.
+const SESION_CADUCADA = "sesion-caducada";
+
 export default function FelixBarberiaApp() {
   // Si se ha llegado tocando un aviso, se arranca directamente en el panel:
   // pedirá la clave si hace falta, y después seguirá hasta la ficha.
@@ -706,6 +711,12 @@ export default function FelixBarberiaApp() {
   // Los datos que solo ve el panel: citas con nombre y teléfono, y la lista de
   // espera. Van por su propia ruta, que exige la clave. Si la sesión ya no
   // vale, se vuelve a pedir en vez de dejar el panel a medias.
+  //
+  // La sesión caducada NO se devuelve como un fallo de carga: se devuelve
+  // marcada, porque son dos cosas distintas y quien llama tiene que poder
+  // distinguirlas. Una clave caducada se cura escribiendo la clave, no
+  // reintentando, y sacarle un aviso de error escondería detrás la pantalla que
+  // de verdad hace falta. El resto —500, la red— sí sube como excepción.
   async function loadAdminData() {
     try {
       const d = await apiGet("/api/admin-data", { auth: true });
@@ -718,7 +729,7 @@ export default function FelixBarberiaApp() {
       if (e.status === 401 || e.status === 503) {
         clearAdminSession();
         setAdminEpoch((n) => n + 1);
-        return [];
+        return SESION_CADUCADA;
       }
       throw e;
     }
@@ -1026,13 +1037,34 @@ function MaintenanceBanner() {
 // Antes, si no se podían cargar los datos, la app seguía con los de ejemplo
 // del código: se veía normal y enseñaba horas libres que no lo estaban.
 // Una página que parece bien no es prueba de nada, así que ahora se dice.
-function LoadErrorBanner({ message }) {
+// El aviso rojo de "no se ha podido cargar". Nació para el fallo de
+// /api/bootstrap —lo que ve el cliente— y ahora lo comparte con el fallo de
+// /api/admin-data, que es lo que ve Félix. Es un aviso y no dos a propósito:
+// dos avisos con dos aspectos distintos para el mismo problema se leen como dos
+// problemas.
+//
+// Sin `titulo`, `texto` ni `onRetry` sale exactamente igual que siempre, que es
+// el caso del cliente y no cambia. `onRetry` añade la salida de "volver a
+// intentarlo", que sólo tiene sentido donde hay algo que reintentar.
+function LoadErrorBanner({ message, titulo, texto, onRetry }) {
   return (
     <div style={{ background: "#3a1414", borderBottom: "1px solid #6b2323", color: "#f2a6a6", padding: "12px 16px", fontSize: 13, lineHeight: 1.45, textAlign: "center" }}>
-      <strong style={{ color: "#ffd7d7" }}>No hemos podido cargar la agenda.</strong>{" "}
-      Lo que ves puede no estar actualizado, así que no reserves desde aquí ahora mismo.{" "}
-      Escríbenos por WhatsApp al{" "}
-      <a href={`https://wa.me/${BARBER_WHATSAPP}`} style={{ color: "#ffd7d7", textDecoration: "underline" }}>610 97 57 33</a>.
+      <strong style={{ color: "#ffd7d7" }}>{titulo || "No hemos podido cargar la agenda."}</strong>{" "}
+      {texto || <>
+        Lo que ves puede no estar actualizado, así que no reserves desde aquí ahora mismo.{" "}
+        Escríbenos por WhatsApp al{" "}
+        <a href={`https://wa.me/${BARBER_WHATSAPP}`} style={{ color: "#ffd7d7", textDecoration: "underline" }}>610 97 57 33</a>.
+      </>}
+      {onRetry && (
+        <span style={{ display: "block", marginTop: 10 }}>
+          <button
+            onClick={onRetry}
+            style={{ background: "rgba(255,215,215,0.14)", border: "1px solid #ffd7d7", color: "#ffd7d7", borderRadius: 999, padding: "7px 15px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+          >
+            Volver a intentarlo
+          </button>
+        </span>
+      )}
       <span style={{ display: "block", opacity: 0.65, fontSize: 11, marginTop: 4 }}>{message}</span>
     </div>
   );
@@ -2936,7 +2968,22 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // contesta, la agenda está vacía porque no ha llegado — no porque el día esté
   // libre. Decirle a Félix "sin citas este día" mientras carga es enseñarle un
   // día que no es el suyo.
+  //
+  // **Sube SÓLO cuando la carga ha ido bien.** Antes subía en un `finally`, así
+  // que un fallo también la daba por cargada: a partir de ahí vacío dejaba de
+  // significar "aún no se sabe" y pasaba a significar "no hay", que es lo
+  // contrario de lo que exige `ADR.md`. De esa bandera falsamente en alto salían
+  // el "Sin citas este día." de un día lleno, el "no se ha encontrado la cita"
+  // de una cita que existe y la fecha de copia leída como "nunca".
   const [dataLoaded, setDataLoaded] = useState(false);
+  // El fallo de esa carga, hermano de `loadError` para /api/bootstrap. Se limpia
+  // al empezar CADA intento y se rellena sólo si el intento falla, para que un
+  // reintento con éxito borre el aviso sin que nadie lo borre a mano.
+  const [dataError, setDataError] = useState(null);
+  // Los datos del panel están y son de fiar. Es lo único que autoriza a pintar
+  // una cifra, una lista o un cero: los tres estados son cargando, cargado y
+  // fallido, y sólo el de en medio tiene dato que enseñar.
+  const datosFiables = dataLoaded && !dataError;
 
   // La línea que se enseña cuando el aviso llevaba a una cita que ya no está
   // de ninguna manera. Se abre el día igual: es más útil que no hacer nada.
@@ -2960,27 +3007,74 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // avisar de algo que no ha ocurrido es peor que no ofrecer nada.
   const [avisarCancelada, setAvisarCancelada] = useState(null);
 
+  // Vivo mientras el panel esté montado. Se mira antes de tocar el estado desde
+  // una carga que ya venía en camino.
+  const vivoRef = useRef(true);
+  useEffect(() => () => { vivoRef.current = false; }, []);
+
+  // Traer los datos del panel.
+  //
+  // Ojo con el nombre: `refreshAppointments` aquí dentro NO es la función
+  // pública que llega con el resto de las props — en el sitio donde se monta el
+  // panel se sobrescribe con `loadAdminData`, la que pide /api/admin-data. Es
+  // esa la que se está llamando.
+  //
+  // Un intento y, si falla, otro más al momento: el fallo real del 2026-08-10
+  // fue el arranque en frío de la función y se curó solo al segundo intento, así
+  // que un tropiezo de un segundo Félix no llega ni a verlo. Sin contador a la
+  // vista y sin espera entre los dos, a propósito.
+  //
+  // Lo que NO se reintenta es la sesión caducada: viene marcada, la pantalla de
+  // la clave ya está en camino y volver a pedirlo sólo la escondería detrás de
+  // un error que no lo es.
+  async function cargarDatosDelPanel({ reintentos = 1 } = {}) {
+    for (let intento = 0; ; intento++) {
+      // Al empezar cada intento: así el que sale bien deja la pantalla limpia.
+      setDataError(null);
+      try {
+        const r = await refreshAppointments();
+        if (!vivoRef.current) return false;
+        if (r === SESION_CADUCADA) return false;
+        setDataLoaded(true);
+        return true;
+      } catch (e) {
+        if (!vivoRef.current) return false;
+        if (intento < reintentos) continue;
+        // La bandera de cargado no se toca: sigue siendo "aún no se sabe".
+        setDataError(e.message || "No se han podido cargar las citas.");
+        return false;
+      }
+    }
+  }
+
+  // Releer las citas DESPUÉS de una escritura que ya ha funcionado. Nunca lanza
+  // y nunca dice que la operación fallara: si lo que falla es el refresco, lo
+  // que se enciende es el aviso de arriba —que dice justo eso—, porque decirle
+  // "no se ha podido cancelar" de una cita que sí se canceló le lleva a
+  // repetirla.
+  async function refrescarTrasEscritura() {
+    await cargarDatosDelPanel();
+  }
+
   useEffect(() => {
     if (!authed) return;
-    let vivo = true;
-    (async () => {
-      try {
-        await refreshAppointments();
-      } finally {
-        if (vivo) setDataLoaded(true);
-      }
-    })();
-    return () => { vivo = false; };
+    cargarDatosDelPanel();
   }, [authed, tab]);
 
   // Aterrizar donde decía el aviso.
   //
-  // **Sólo con `dataLoaded`**: antes de que lleguen las citas, la lista está
-  // vacía porque no ha llegado, no porque no haya nadie, y decidir aquí sería
-  // decirle "no está" de una cita que sí está. Y sólo con `authed`, porque
-  // hasta entonces lo que se enseña es la pantalla de la clave.
+  // **Nunca antes de que la carga haya terminado de una manera o de otra**:
+  // mientras carga, la lista está vacía porque no ha llegado, no porque no haya
+  // nadie, y decidir aquí sería decirle "no está" de una cita que sí está. Y
+  // sólo con `authed`, porque hasta entonces lo que se enseña es la clave.
+  //
+  // Si la carga FALLÓ se aterriza igual en el día, pero lo que se dice es que
+  // las citas no han cargado — no que la cita no exista, que es la mentira que
+  // este issue viene a quitar.
   useEffect(() => {
-    if (!avisoDestino || !authed || !dataLoaded) return;
+    if (!avisoDestino || !authed) return;
+    // Todavía cargando: se espera. Ni "está" ni "no está" se pueden decir aún.
+    if (!dataLoaded && !dataError) return;
     if (avisoAplicado.current) return;
     avisoAplicado.current = true;
 
@@ -2992,6 +3086,12 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     // buscar nada, que es lo que el aviso prometía en la pantalla de bloqueo.
     if (avisoDestino.tipo === "cancelada" && avisoDestino.dia) {
       setHuecoLibre({ dia: avisoDestino.dia, hora: avisoDestino.hora || null });
+    }
+
+    if (!dataLoaded) {
+      setAvisoNota("No he podido cargar las citas de este día, así que no puedo abrirte la ficha. La cita sigue ahí: vuelve a intentarlo con el botón del aviso rojo.");
+      if (onAvisoAplicado) onAvisoAplicado();
+      return;
     }
 
     let vivo = true;
@@ -3013,7 +3113,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       if (onAvisoAplicado) onAvisoAplicado();
     })();
     return () => { vivo = false; };
-  }, [avisoDestino, authed, dataLoaded, appointments]);
+  }, [avisoDestino, authed, dataLoaded, dataError, appointments]);
 
   function apptsForDate(d) {
     return appointments.filter((a) => a.dateKey === dateKey(d)).sort((a, b) => toMin(a.time) - toMin(b.time));
@@ -3334,8 +3434,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     // todos los avisos.
     if (appt && appt.dateKey) setHuecoLibre({ dia: appt.dateKey, hora: appt.time || null });
     // El panel tiene su propia copia de las citas: hay que releerla, la
-    // pública no le sirve.
-    await refreshAppointments();
+    // pública no le sirve. La cancelación ya está hecha, así que un refresco
+    // que falle se cuenta como lo que es y no como una cancelación fallida.
+    await refrescarTrasEscritura();
   }
 
   // Un único camino para marcar si vino o no, lo pidan la ficha o la lista del
@@ -3346,14 +3447,18 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   //
   // El refresco de después es lo que recalcula las cifras de dinero, así que
   // da igual por dónde se marque: las dos vías acaban en el mismo sitio.
+  //
+  // El refresco va FUERA del `try`: dentro, un refresco fallido salía por el
+  // `catch` como "no se ha podido guardar" una marca que sí se había guardado.
   async function setNoShow(id, value) {
     try {
       const updated = await setAppointmentNoShow(id, value);
       setSelectedAppt((prev) => (prev && prev.id === id ? updated : prev));
-      await refreshAppointments();
     } catch (e) {
       window.alert(`No se ha podido guardar: ${e.message}`);
+      return;
     }
+    await refrescarTrasEscritura();
   }
 
   async function toggleNoShow(id) {
@@ -3365,12 +3470,16 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // de después es lo que recalcula el total del día, y con él el efectivo que
   // la pantalla del cierre pinta en vivo mientras teclea.
   //
-  // El error NO se traga aquí: sube a la casilla que lo pidió, que se pinta en
-  // rojo y vuelve a lo que hay guardado. Un importe pintado como guardado sin
-  // estarlo es dinero descuadrado que nadie va a encontrar después.
+  // El error del GUARDADO no se traga aquí: sube a la casilla que lo pidió, que
+  // se pinta en rojo y vuelve a lo que hay guardado. Un importe pintado como
+  // guardado sin estarlo es dinero descuadrado que nadie va a encontrar después.
+  //
+  // El del refresco de después sí, porque no es el mismo error: el importe ya
+  // está guardado, y devolverle a la casilla el rojo de "no se ha guardado" le
+  // haría escribirlo otra vez.
   async function setPrecioCobrado(id, importe) {
     await setAppointmentCharged(id, importe);
-    await refreshAppointments();
+    await refrescarTrasEscritura();
   }
 
   async function addManualAppt(data) {
@@ -3392,8 +3501,9 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
     }
     setShowAdd(false);
     // La cita se ha creado, pero createAppointment solo mete el bloque en el
-    // estado público. El panel necesita la fila entera: se relee.
-    await refreshAppointments();
+    // estado público. El panel necesita la fila entera: se relee. La cita ya
+    // está puesta, así que un refresco fallido no puede leerse como que no.
+    await refrescarTrasEscritura();
   }
 
   function blockRange(data) {
@@ -3454,10 +3564,31 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
         </div>
       </div>
 
+      {/* El aviso de que las citas no han cargado, encima de todo lo demás y en
+          TODAS las pantallas del panel: un "0 €" en la semana o un "ningún
+          cliente" es exactamente la misma mentira que "sin citas este día", y
+          Félix puede estar mirando cualquiera de ellas cuando falle.
+
+          Va aquí arriba y una sola vez: el mismo aviso repetido pantalla por
+          pantalla se leería como varios problemas distintos. Debajo, cada sitio
+          que lee citas se calla en vez de enseñar un vacío o un cero. */}
+      {dataError && (
+        <div style={{ margin: "0 -16px 14px", borderRadius: 0 }}>
+          <LoadErrorBanner
+            message={dataError}
+            titulo="No he podido cargar tus citas."
+            texto="Lo que ves en esta pantalla NO es lo que tienes hoy: puede faltar gente. No cierres la caja hasta que carguen."
+            onRetry={() => cargarDatosDelPanel({ reintentos: 0 })}
+          />
+        </div>
+      )}
+
       {search.length > 0 ? (
         <div className="fade-in">
-          <p style={{ fontSize: 12, color: SMOKE, marginBottom: 8 }}>{searchResults.length} resultado(s)</p>
-          {searchResults.map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
+          {/* Sin las citas cargadas no hay ningún resultado que contar, y
+              "0 resultado(s)" se leería como que ese cliente no existe. */}
+          {datosFiables && <p style={{ fontSize: 12, color: SMOKE, marginBottom: 8 }}>{searchResults.length} resultado(s)</p>}
+          {datosFiables && searchResults.map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} />)}
         </div>
       ) : (
         <>
@@ -3488,17 +3619,21 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   no la lista de citas. El resto de los días va debajo, para no
                   empujar la agenda hacia abajo sin motivo.
 
-                  Nada de esto antes de `loaded` y `dataLoaded`: sin el horario
+                  Nada de esto antes de `loaded` y `datosFiables`: sin el horario
                   no hay raya entre mañana y tarde, y sin los datos del panel la
-                  lista está vacía porque no ha llegado, no porque no haya
-                  nadie. */}
-              {loaded && dataLoaded && esperaDelDia && (
+                  lista está vacía porque no ha llegado o porque falló, no porque
+                  no haya nadie. */}
+              {loaded && datosFiables && esperaDelDia && (
                 <div style={{ marginTop: 14 }}>
                   <EsperaDelDia dia={dateKey(cursorDate)} hueco={esperaDelDia} waitlist={waitlist} services={services} schedule={schedule} onNotified={markWaitlistNotified} onRemove={removeWaitlistEntry} />
                 </div>
               )}
+              {/* Tres estados y no dos: cargando (el hueco gris de siempre),
+                  cargado (la agenda) y fallido (el aviso rojo de arriba, y aquí
+                  nada). "Sin citas este día." sólo puede salir cuando de verdad
+                  se sabe que no viene nadie. */}
               <div style={{ margin: "14px 0" }}>
-                {!dataLoaded ? (
+                {dataError ? null : !dataLoaded ? (
                   <LoadingRegion label="Cargando las citas del día">
                     <div className="card" style={{ borderRadius: 12, padding: 20, textAlign: "center" }}>
                       <Skeleton width="46%" height={16} style={{ display: "block", margin: "0 auto" }} />
@@ -3508,14 +3643,14 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   <EmptyState text="Sin citas este día." />
                 ) : apptsForDate(cursorDate).map((a) => <ApptRow key={a.id} a={a} services={services} barbers={barbers} groupSize={groupSizes[a.groupId]} onClick={() => setSelectedAppt(a)} past={hasPassed(a)} onSetNoShow={(value) => setNoShow(a.id, value)} />)}
               </div>
-              {loaded && dataLoaded && !esperaDelDia && (
+              {loaded && datosFiables && !esperaDelDia && (
                 <EsperaDelDia dia={dateKey(cursorDate)} hueco={null} waitlist={waitlist} services={services} schedule={schedule} onNotified={markWaitlistNotified} onRemove={removeWaitlistEntry} />
               )}
               {/* El dinero del día, debajo de la lista: primero quién viene,
                   que es para lo que se abre esta pantalla, y después la caja.
                   En un día que todavía no ha llegado no se enseña — no hay
                   nada cobrado y cinco ceros se leen como una avería. */}
-              {dataLoaded && dayIsPast && (
+              {datosFiables && dayIsPast && (
                 <MoneyBlock m={dayMoney} totalLabel={dateKey(cursorDate) === dateKey(new Date()) ? "Cobrado hoy" : "Cobrado ese día"} />
               )}
               {/* El cierre de la caja, debajo del dinero del día y sólo en un
@@ -3536,10 +3671,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   marcas={dayMarks}
                   revisar={dayMoney.revisar}
                   citas={citasCobrables}
+                  bloqueado={!datosFiables}
                   onSetPrecio={setPrecioCobrado}
                   onSave={saveClose}
                   onRemove={removeClose}
-                  onDone={refreshAppointments}
+                  onDone={refrescarTrasEscritura}
                 />
               )}
               {/* Sin servicios no se puede apuntar una cita: la ventana arranca
@@ -3554,6 +3690,11 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "semana" && (
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -7))} onNext={() => setCursorDate(addDays(cursorDate, 7))} label={`Semana del ${weekDays[0].getDate()} ${MESES[weekDays[0].getMonth()]}`} />
+              {/* Todas las cifras de la semana cuelgan de las citas: sin ellas
+                  no se enseña ninguna. Un cero que sale de una carga fallida es
+                  la misma mentira que "sin citas este día", y encima aquí es
+                  dinero. Habla el aviso de arriba. */}
+              {datosFiables && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 14, marginBottom: 4 }}>
                 <StatCard label="Citas hechas esta semana" value={weekCounts.hechas} sub={weekCounts.porVenir > 0 ? `${weekCounts.porVenir} por venir` : null} />
                 <StatCard label="Cobrado esta semana" value={`${fmtEur(weekMoney.total)}€`} />
@@ -3562,9 +3703,10 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                     movería de sitio el resto de la pantalla. */}
                 <StatCard label="Perdido por ausencias" value={`${fmtEur(weekLost)}€`} tone="perdida" wide />
               </div>
-              <MoneyBlock m={weekMoney} nota={notaSinCerrar(weekMoney)} />
+              )}
+              {datosFiables && <MoneyBlock m={weekMoney} nota={notaSinCerrar(weekMoney)} />}
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                {weekDays.map((d) => (
+                {datosFiables && weekDays.map((d) => (
                   <div key={dateKey(d)} className="card" style={{ borderRadius: 12, padding: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: GOLD, marginBottom: 6 }}>{DIAS[d.getDay()]} {d.getDate()}</div>
                     {apptsForDate(d).length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Sin citas</span> :
@@ -3591,6 +3733,10 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "mes" && (
             <div className="fade-in">
               <DateNav date={cursorDate} onPrev={() => setCursorDate(addDays(cursorDate, -30))} onNext={() => setCursorDate(addDays(cursorDate, 30))} label={`${MESES[cursorDate.getMonth()][0].toUpperCase() + MESES[cursorDate.getMonth()].slice(1)} ${cursorDate.getFullYear()}`} />
+              {/* Igual que la semana, y por lo mismo: los dos rankings vacíos se
+                  leerían como que no hay clientes habituales, no como que no se
+                  sabe. */}
+              {datosFiables && (<>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 16, marginBottom: 10 }}>
                 <StatCard label="Cobrado este mes" value={`${fmtEur(monthMoney.total)}€`} />
                 <StatCard label="Citas hechas este mes" value={monthCounts.hechas} sub={monthCounts.porVenir > 0 ? `${monthCounts.porVenir} por venir` : null} />
@@ -3609,7 +3755,8 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   </div>
                 ))}
               </div>
-              {stats.topNoShow.length > 0 && (
+              </>)}
+              {datosFiables && stats.topNoShow.length > 0 && (
                 <div className="card" style={{ borderRadius: 12, padding: 14, marginTop: 10 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: "#e0a0a0", marginBottom: 8 }}>Clientes que más faltan</div>
                   {stats.topNoShow.map((t, i) => (
@@ -3624,7 +3771,10 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
 
           {tab === "clientes" && (
             <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {clientMap.map((c) => (
+              {/* Una lista de clientes vacía por un fallo de carga se lee como
+                  que se han borrado. Sin datos no se pinta ninguna: habla el
+                  aviso de arriba. */}
+              {datosFiables && clientMap.map((c) => (
                 <div key={c.phone} className="card" style={{ borderRadius: 12, padding: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{c.name}</div>
@@ -3640,9 +3790,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "ajustes" && (
             <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <AvisosCard />
-              <CopiaCard lastBackup={lastBackup} descargarCopia={descargarCopia} />
+              <CopiaCard lastBackup={lastBackup} sabido={datosFiables} descargarCopia={descargarCopia} />
               <ScheduleEditor schedule={schedule} setSchedule={setSchedule} />
-              {waitlist.length > 0 && (
+              {/* La lista de espera llega en la MISMA carga que las citas, así
+                  que un fallo la deja vacía y la tarjeta desaparecería entera:
+                  se leería como que no hay nadie esperando. Habla el aviso de
+                  arriba, igual que en el resto del panel. */}
+              {datosFiables && waitlist.length > 0 && (
                 <div className="card" style={{ borderRadius: 12, padding: 14 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 10 }}>Lista de espera ({waitlist.length})</div>
                   {/* La lista COMPLETA, incluida la gente cuyo día ya pasó: es
@@ -4302,7 +4456,13 @@ function PrecioCita({ cita, onSet }) {
 // el servidor, que además calcula el total del día por su cuenta. Y si el
 // guardado falla se dice: un cierre pintado como guardado sin estarlo es
 // dinero descuadrado que nadie va a encontrar después.
-function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPrecio, onSave, onRemove, onDone }) {
+//
+// `bloqueado` es "las citas de este día no son de fiar". El total del día sale
+// de ellas, así que no se pinta y no se deja cerrar: un reparto firmado sobre
+// una lista que no llegó es peor que no tener reparto. La validación de verdad
+// sigue estando en el servidor — esto es no ponerle delante un número que no
+// puede ser cierto.
+function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, bloqueado = false, onSetPrecio, onSave, onRemove, onDone }) {
   const inicial = (n) => (n ? String(fmtEur(n)) : "");
   const [tarjeta, setTarjeta] = useState(() => inicial(cierre ? cierre.card : marcas.tarjeta));
   const [bizum, setBizum] = useState(() => inicial(cierre ? cierre.bizum : marcas.bizum));
@@ -4319,7 +4479,7 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
   const sePasa = efectivo !== null && efectivo < 0;
 
   async function guardar() {
-    if (malEscrito || sePasa || guardando) return;
+    if (bloqueado || malEscrito || sePasa || guardando) return;
     setGuardando(true);
     setError(null);
     try {
@@ -4335,7 +4495,7 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
   }
 
   async function deshacer() {
-    if (guardando) return;
+    if (bloqueado || guardando) return;
     setGuardando(true);
     setError(null);
     try {
@@ -4358,11 +4518,18 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
         <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD }}>Cierre de caja</div>
         <div style={{ fontSize: 11, color: cierre ? GOLD : SMOKE }}>{cierre ? "Cerrado" : "Sin cerrar"}</div>
       </div>
-      <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 10 }}>
-        Total del día: <strong style={{ color: BONE }}>{fmtEur(total)}€</strong>. Escribe lo que pasó por tarjeta y por Bizum; el efectivo es lo que queda.
-      </div>
+      {bloqueado ? (
+        <div style={{ fontSize: 11.5, color: "#e0a0a0", marginBottom: 10 }}>
+          No he podido cargar las citas de este día, así que no sé cuánto suma: no puedes
+          cerrar la caja hasta que carguen. Vuelve a intentarlo desde el aviso rojo de arriba.
+        </div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: SMOKE, marginBottom: 10 }}>
+          Total del día: <strong style={{ color: BONE }}>{fmtEur(total)}€</strong>. Escribe lo que pasó por tarjeta y por Bizum; el efectivo es lo que queda.
+        </div>
+      )}
 
-      {revisar && (
+      {!bloqueado && revisar && (
         <div style={{ fontSize: 11.5, color: "#e0a0a0", marginBottom: 10 }}>
           Este cierre suma más que el total del día — pasó al marcar a alguien como ausente. Vuelve a escribir los importes o deshaz el cierre.
         </div>
@@ -4372,7 +4539,7 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
           primero se cuadra el total del día y después se reparte, que es el
           orden en que Félix cierra. Cambiar un importe aquí mueve el total de
           arriba y, con él, el efectivo que se pinta en vivo abajo. */}
-      {citas && citas.length > 0 && onSetPrecio && (
+      {!bloqueado && citas && citas.length > 0 && onSetPrecio && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: SMOKE, marginBottom: 6 }}>
             Lo cobrado por cada cita. Cámbialo si le has hecho precio; déjalo vacío para el de siempre.
@@ -4381,6 +4548,7 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
         </div>
       )}
 
+      {!bloqueado && (<>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <label style={{ fontSize: 11, color: SMOKE }}>
           Tarjeta
@@ -4438,6 +4606,7 @@ function CierreCaja({ dateKey, total, cierre, marcas, revisar, citas, onSetPreci
           </button>
         )}
       </div>
+      </>)}
     </div>
   );
 }
@@ -4619,21 +4788,26 @@ const AMBAR = "#E8A33D";
 // nunca más no protege de nada. Por eso la fecha se enseña siempre —también
 // cuando está al día, en gris y pequeña— y sólo cambia de color cuando lleva
 // más de un mes. Sin ventanas emergentes: dar la lata acaba en que se ignora.
-function CopiaCard({ lastBackup, descargarCopia }) {
+// `sabido` es si la fecha de la última copia ha llegado de verdad. Viene en la
+// misma carga que las citas, así que un fallo la borra de la pantalla — y "no
+// te has bajado ninguna" es lo peor que se le puede decir a alguien que sí la
+// tiene: apagaría el recordatorio justo cuando menos se sabe qué hay.
+function CopiaCard({ lastBackup, sabido = true, descargarCopia }) {
   const [ocupado, setOcupado] = useState(false);
   const [resumen, setResumen] = useState(null);
   const [error, setError] = useState(null);
 
   const dias = useMemo(() => {
-    if (!lastBackup) return null;
+    if (!sabido || !lastBackup) return null;
     const t = Date.parse(lastBackup);
     if (Number.isNaN(t)) return null;
     return Math.floor((Date.now() - t) / 86400000);
-  }, [lastBackup]);
+  }, [lastBackup, sabido]);
 
   const vieja = dias !== null && dias > DIAS_AVISO_COPIA;
 
   function cuando() {
+    if (!sabido) return "No he podido cargar cuándo fue la última copia.";
     if (!lastBackup) return "Todavía no te has bajado ninguna.";
     const t = Date.parse(lastBackup);
     if (Number.isNaN(t)) return "Última copia: no se sabe cuándo.";
