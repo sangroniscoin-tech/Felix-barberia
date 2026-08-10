@@ -55,6 +55,15 @@ endorsement.
   `saveCollection`, which writes a whole collection, refuses to run pre-load or it would
   overwrite the real rows with an empty list. The constants it replaced showed customers
   15 €/10 €/22 € for half a second before the real prices arrived.
+- **A failed load is a third state, never a loaded one**, and this binds the panel as much
+  as the public side. Its flag rises only on success — it used to rise in a `finally`, which
+  turned every failure back into *none*: that is what made a full day read "Sin citas este
+  día.", a real cita read "no se ha encontrado" from a push notice, and a taken hueco look
+  free (#87). Anything reading citas has three states — loading, loaded, failed — and only
+  the middle one may render a figure, a list or a zero; the other two are the skeleton and
+  the red banner. A caducated session (`401`/`503`) is none of the three: it is the password
+  screen, so it is never retried and never becomes an error. And a refresh that fails *after*
+  a write that succeeded is reported as a failed refresh, never as a failed write.
 - The whole app is one ~2000-line file. Splitting it is a real improvement and also a
   large diff over code with no tests — it needs its own issue, not a drive-by.
 - **Anything both doors have to agree on lives in `shared/`, once.** `DIAS_MAX_RESERVA` —
