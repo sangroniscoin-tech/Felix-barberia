@@ -175,6 +175,16 @@ endorsement.
 - The health check must reach the database, not just the page: `/api/health` separates
   "environment variables missing" from "Supabase not answering". A failed load shows a red
   banner — but check the data anyway.
+- **`fail()` logs every `api/` error and its response is frozen.** A 500 that only reaches
+  the browser is gone the moment the tab closes — that is why the 2026-08-10 one could never
+  be diagnosed (#88). It logs route, status, reason, message and stack; the route is taken
+  from `res.req` so no caller changes, and only the path, never the query. Its **status,
+  `reason` and `message` may not move**: five places check `401`/`503` to bounce to the
+  password screen, `message` is shown verbatim to customers in the red banner, and
+  `slot_taken`/`slot_held` are told apart by that string. And `fail()` is **not** the only
+  source of that shape — `admin-session.js`, `adminAuth.js` and `health.js` each hand-roll
+  it, with health saying `database_unreachable` where `fail()` says `database_error`.
+  Changing one changes nothing in the others; nothing keeps them in sync.
 - Vercel preview deployments are behind SSO and cannot be curl'd from a session. Ship
   server changes to production before pointing the client at them; that is the only way
   to verify environment variables without the client's browser.
