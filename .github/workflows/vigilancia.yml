@@ -1,0 +1,224 @@
+# Vigilancia de producción.
+#
+# Mira cada diez minutos que la web sigue cogiendo citas. Cuando no, el trabajo
+# se pone en ROJO y GitHub avisa por correo a la cuenta dueña del repositorio.
+# Eso es todo lo que hace: **observa e informa, nunca actúa**. No revierte, no
+# redespliega y no reintenta el despliegue — lo prohíbe el mandato cero, y una
+# vigilancia que además toca cosas es una avería con permisos.
+#
+# ── POR QUÉ VIVE EN GITHUB Y NO EN LA APLICACIÓN ────────────────────────────
+#
+# El aviso NO puede ir por el Web Push que ya hace sonar el móvil de Félix
+# cuando alguien reserva. Ese aviso lo firma el propio servidor con las claves
+# VAPID de `push_keys`, que están en Supabase, y la lista de móviles vive en
+# `push_subscriptions`, que también. Si lo caído es Supabase —o Vercel—,
+# `sendPush` no puede ni leer las claves ni saber a quién escribir: el aviso que
+# informa de la avería es exactamente el que la avería impide mandar. Un
+# detector de humos dentro de la casa que se está quemando.
+#
+# Por eso quien vigila tiene que ser lo único del proyecto que no comparte
+# suerte con la aplicación, y eso es GitHub Actions.
+#
+# ── POR QUÉ NO ESTÁ DENTRO DE ci.yml ────────────────────────────────────────
+#
+# `ci.yml` es la puerta de la fusión. Si se le metiera esta comprobación, una
+# caída de producción pondría en rojo el check que decide si un cambio puede
+# entrar, y son dos cosas distintas: que el código no compile y que la web esté
+# caída. Separados, cada rojo significa una única cosa.
+#
+# ── LO QUE NO PROMETE ───────────────────────────────────────────────────────
+#
+#   · GitHub puede retrasar un cron cuando tiene carga, y en casos raros
+#     saltárselo. "Cada 10 minutos" es en la práctica "entre 10 y 25". Sirve
+#     para enterarse a tiempo, no para cronometrar nada.
+#   · GitHub DESACTIVA los workflows programados de un repositorio sin actividad
+#     durante 60 días. Un proyecto parado se queda sin vigilancia solo, y sin
+#     avisar — justo cuando más falta hace. Se vuelve a activar desde la pestaña
+#     Actions.
+#   · Comprueba que la puerta de reservar está viva y que filtra. NO comprueba
+#     que una reserva buena termine en una fila: para eso habría que reservar de
+#     verdad en la agenda de un negocio real cada diez minutos.
+
+name: Vigilancia
+
+on:
+  schedule:
+    # Cada 10 minutos. El cron de GitHub va en UTC, pero "cada 10 minutos" no
+    # depende de la zona horaria, así que aquí no hay ninguna conversión que
+    # hacer ni que revisar en marzo y en octubre.
+    - cron: "*/10 * * * *"
+  # Para poder lanzarla a mano desde la pestaña Actions sin esperar al reloj.
+  # La usa cualquier sesión que quiera comprobar producción antes de fusionar.
+  workflow_dispatch:
+
+# Solo lee. No necesita escribir nada en el repositorio, y lo que no se concede
+# no se puede usar por error.
+permissions:
+  contents: read
+
+jobs:
+  salud:
+    runs-on: ubuntu-latest
+    # Un run normal tarda segundos. Si algo se queda colgado, que muera solo en
+    # vez de ocupar sitio hasta el siguiente.
+    timeout-minutes: 5
+
+    steps:
+      # Sin `actions/checkout`, sin Node y sin `npm install`: la comprobación es
+      # `curl` contra producción y no necesita ni una línea del repositorio. Un
+      # run que no descarga nada es un run que no puede ponerse rojo por una
+      # razón distinta de la que vigila, que es todo el sentido de esto.
+      - name: Comprobar que la web sigue cogiendo citas
+        env:
+          SITIO: https://felix-barberia.vercel.app
+        run: |
+          # Sin `-e` a propósito: las comprobaciones devuelven código de error y
+          # se leen, no tumban el script en la primera.
+          set -uo pipefail
+
+          MOTIVO=""
+          RESPUESTA_CRUDA=""
+
+          comprobar() {
+            MOTIVO=""
+            RESPUESTA_CRUDA=""
+
+            # 1. La web abre y lo que sirve es esta app. Un Vercel que devuelve
+            #    una página de error también responde 200, así que no basta con
+            #    que conteste: tiene que llevar dentro el nombre de la barbería.
+            if ! curl -fsS --max-time 20 "$SITIO/" | grep -q "Félix Barbería"; then
+              MOTIVO="La web no abre, o lo que sale no es la app de la barbería. Un cliente que entre ahora no ve nada."
+              return 1
+            fi
+
+            # 2. El servidor llega a la base de datos. Es la comprobación que de
+            #    verdad puede fallar: la de arriba solo demuestra que Vercel ha
+            #    servido una página.
+            local salud
+            salud="$(curl -sS --max-time 20 "$SITIO/api/health" 2>&1)"
+            case "$salud" in
+              *'"ok":true'*)
+                : ;;
+              *not_configured*)
+                MOTIVO="Al servidor le faltan sus variables de entorno en Vercel (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o ADMIN_PASSWORD). La web abre pero no puede hacer nada."
+                RESPUESTA_CRUDA="$salud"
+                return 1 ;;
+              *database_unreachable*)
+                MOTIVO="El servidor está vivo pero Supabase no contesta. La web se ve y NO se puede reservar."
+                RESPUESTA_CRUDA="$salud"
+                return 1 ;;
+              *)
+                MOTIVO="La comprobación de salud no contestó lo que debía."
+                RESPUESTA_CRUDA="$salud"
+                return 1 ;;
+            esac
+
+            # 3. Vuelven datos reales. Una respuesta vacía y bien formada es
+            #    indistinguible de una buena si no se mira lo que trae dentro.
+            if ! curl -fsS --max-time 20 "$SITIO/api/bootstrap" | grep -q "Corte de pelo"; then
+              MOTIVO="La app responde pero no devuelve los servicios. Un cliente vería la web sin precios ni horas libres."
+              return 1
+            fi
+
+            # 4. La puerta de reservar está viva y filtra.
+            #
+            #    NO CREA NINGUNA CITA, y eso es deliberado: se manda una fecha ya
+            #    pasada, y el plazo se comprueba en `api/appointments.js` ANTES
+            #    de tocar la base de datos. Así la sonda no escribe una fila, no
+            #    gasta una escritura, no pasa por el tope de `ritmo.js` y no
+            #    ensucia el registro de errores — un 400 sale por `bad()`, que no
+            #    es `fail()` y por tanto no se anota como avería.
+            #
+            #    Se exige que el rechazo sea EXACTAMENTE el del plazo
+            #    (`"field":"dateKey"`) y no un `invalid_input` cualquiera. El
+            #    nombre, el teléfono y el correo se validan ANTES que la fecha,
+            #    así que llegar hasta el plazo demuestra que la ruta se ha
+            #    recorrido entera. Conformarse con "algo la ha rechazado" dejaría
+            #    pasar por buena una ruta que se cae en la primera línea.
+            local ayer codigo cuerpo
+            ayer="$(date -u -d '-1 day' +%F)"
+            cuerpo="$RUNNER_TEMP/sonda-reserva.json"
+            codigo="$(curl -sS --max-time 20 -o "$cuerpo" -w '%{http_code}' \
+              -X POST "$SITIO/api/appointments" \
+              -H 'Content-Type: application/json' \
+              -d "{\"dateKey\":\"$ayer\",\"time\":\"10:00\",\"serviceId\":\"corte\",\"name\":\"Vigilancia\",\"phone\":\"611111111\"}" 2>&1)"
+
+            if [ "$codigo" != "400" ] \
+              || ! grep -q '"reason":"invalid_input"' "$cuerpo" 2>/dev/null \
+              || ! grep -q '"field":"dateKey"' "$cuerpo" 2>/dev/null; then
+              MOTIVO="La puerta de reservar no responde como debe. Tenía que rechazar una fecha pasada con un 400 y no lo ha hecho."
+              RESPUESTA_CRUDA="código HTTP: ${codigo:-(ninguno)} — respuesta: $(head -c 300 "$cuerpo" 2>/dev/null || echo '(vacía)')"
+              return 1
+            fi
+
+            return 0
+          }
+
+          # ── Primer intento ──────────────────────────────────────────────────
+          if comprobar; then
+            {
+              echo "## ✅ La web coge citas con normalidad"
+              echo
+              echo "Comprobado: la web abre, el servidor llega a la base de datos, los datos"
+              echo "reales llegan, y la puerta de reservar está viva y filtra."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "OK"
+            exit 0
+          fi
+
+          PRIMER_MOTIVO="$MOTIVO"
+          PRIMER_CRUDO="$RESPUESTA_CRUDA"
+          echo "Primer intento fallido: $PRIMER_MOTIVO"
+          echo "Esperando 60 segundos para repetirlo entero..."
+
+          # ── Segundo intento ─────────────────────────────────────────────────
+          # Un parpadeo de dos segundos no puede convertirse en un aviso, o el
+          # aviso deja de leerse — que es exactamente cómo mueren las vigilancias.
+          # Solo se avisa si falla las DOS veces.
+          sleep 60
+
+          if comprobar; then
+            {
+              echo "## ✅ La web coge citas con normalidad"
+              echo
+              echo "Ojo: el primer intento falló y el segundo, 60 segundos después, fue bien."
+              echo "Ha sido un parpadeo, no una avería. No hay nada que hacer."
+              echo
+              echo "Lo que falló la primera vez:"
+              echo
+              echo "> $PRIMER_MOTIVO"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Recuperado en el segundo intento."
+            exit 0
+          fi
+
+          # ── Ha fallado dos veces: esto es una avería ────────────────────────
+          {
+            echo "## 🔴 La web NO está cogiendo citas"
+            echo
+            echo "Ha fallado dos veces seguidas, con 60 segundos entre medias. No es un parpadeo."
+            echo
+            echo "### Qué pasa"
+            echo
+            echo "$MOTIVO"
+            if [ -n "$RESPUESTA_CRUDA" ]; then
+              echo
+              echo "Lo que contestó el servidor:"
+              echo
+              echo '```'
+              echo "$RESPUESTA_CRUDA"
+              echo '```'
+            fi
+            echo
+            echo "### Qué hacer"
+            echo
+            echo "**No toques nada todavía.** Esto solo avisa; no ha cambiado ni deshecho nada."
+            echo "Díselo a quien lleva la app y que mire antes de mover una pieza: revertir a"
+            echo "ciegas una web que ya está caída es cómo se pierde de vista qué la tiró."
+            echo
+            echo "Mientras tanto, tus clientes pueden seguir pidiendo cita por WhatsApp"
+            echo "(+34 610 97 57 33), y tú sigues teniendo tus citas en el panel en cuanto vuelva."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::$MOTIVO"
+          exit 1
