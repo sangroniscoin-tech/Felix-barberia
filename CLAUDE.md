@@ -42,6 +42,17 @@ green check, a merge, and a verified production. A question is just answered.
 
 **One issue solves one problem.** If you can't title it without "and", it's two issues.
 
+**Don't ask the client to authorise each step.** Said by him on 2026-08-11, in his words:
+*"no me preguntes tanto para darte autorización de cosas, tú hazlo"*. Interviewing him about
+**what** to build is the job and does not change; asking permission to merge and deploy work
+he already asked for is not, and it was wearing him down. Build it, ship it, verify it, tell
+him what changed. Four things still come back to him, and none of them is a formality:
+anything that **deletes or rewrites data that already exists**, anything that **costs money
+or opens an account**, anything that **changes what his customers see** in a way he hasn't
+asked for — and **mandate zero, which outranks his instruction and mine**: a production
+that is already broken stops everything, and nothing is reverted, rolled back or redeployed
+on an agent's judgement. He authorised shipping, not deciding alone how to undo an outage.
+
 An issue's label is its stage, exactly one at a time: `suggested` → `ready-for-agent` →
 `implementing` → `in-review` → `deploying` → `shipped`, with `blocked` added alongside
 whichever stage stalled. Setting labels replaces the whole set, which is what keeps them
