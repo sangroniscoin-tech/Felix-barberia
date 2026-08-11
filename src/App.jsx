@@ -3864,19 +3864,63 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                 <p style={{ fontSize: 11, color: SMOKE, marginTop: 8 }}>Estas fotos son públicas: cualquier cliente puede verlas en "Galería" (menú ☰).</p>
               </div>
 
-              <SettingsBlock title="Días festivos" items={festivos} onAdd={(v) => setFestivos([...festivos, v])} />
-              <SettingsBlock title="Días bloqueados sueltos" items={blockedDays} onAdd={(v) => setBlockedDays([...blockedDays, v])} />
+              <SettingsBlock
+                title="Días festivos"
+                items={festivos}
+                onAdd={(v) => setFestivos([...festivos, v])}
+                onRemove={(i) => {
+                  if (confirmarApertura(`el festivo del ${diaHumano(festivos[i])}`)) {
+                    setFestivos(festivos.filter((_, j) => j !== i));
+                  }
+                }}
+              />
+              <SettingsBlock
+                title="Días bloqueados sueltos"
+                items={blockedDays}
+                onAdd={(v) => setBlockedDays([...blockedDays, v])}
+                onRemove={(i) => {
+                  if (confirmarApertura(`el bloqueo del ${diaHumano(blockedDays[i])}`)) {
+                    setBlockedDays(blockedDays.filter((_, j) => j !== i));
+                  }
+                }}
+              />
               <div className="card" style={{ borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 8 }}>Vacaciones (rangos)</div>
-                {vacationRanges.map((r, i) => (
-                  <div key={i} style={{ fontSize: 12.5, padding: "4px 0" }}>Del {r.start} al {r.end}</div>
+                {vacationRanges.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguno</span> : vacationRanges.map((r, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                    <span style={{ fontSize: 12.5, flex: 1 }}>Del {r.start} al {r.end}</span>
+                    <button
+                      onClick={() => {
+                        if (confirmarApertura(`las vacaciones del ${diaHumano(r.start)} al ${diaHumano(r.end)}`)) {
+                          setVacationRanges(vacationRanges.filter((_, j) => j !== i));
+                        }
+                      }}
+                      aria-label={`Quitar las vacaciones del ${r.start} al ${r.end}`}
+                      title="Quitar"
+                      style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", display: "flex", padding: 0 }}
+                    ><X size={14} /></button>
+                  </div>
                 ))}
                 <button onClick={() => setShowVacation(true)} className="ghost-btn" style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>+ Añadir rango</button>
               </div>
               <div className="card" style={{ borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 8 }}>Horas bloqueadas</div>
                 {blockedRanges.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguna</span> :
-                  blockedRanges.map((r, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px 0" }}>{r.dateKey} · {r.start}–{r.end} {r.label ? `(${r.label})` : ""}</div>)}
+                  blockedRanges.map((r, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                      <span style={{ fontSize: 12.5, flex: 1 }}>{r.dateKey} · {r.start}–{r.end} {r.label ? `(${r.label})` : ""}</span>
+                      <button
+                        onClick={() => {
+                          if (confirmarApertura(`las horas bloqueadas del ${diaHumano(r.dateKey)}, de ${r.start} a ${r.end}`)) {
+                            setBlockedRanges(blockedRanges.filter((_, j) => j !== i));
+                          }
+                        }}
+                        aria-label={`Quitar el bloqueo del ${r.dateKey} de ${r.start} a ${r.end}`}
+                        title="Quitar"
+                        style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", display: "flex", padding: 0 }}
+                      ><X size={14} /></button>
+                    </div>
+                  ))}
                 <button onClick={() => setShowBlock(true)} className="ghost-btn" style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>+ Bloquear hora</button>
               </div>
             </div>
@@ -4893,12 +4937,47 @@ function QuickActions({ onAdd, onBlock, onVacation }) {
   );
 }
 
-function SettingsBlock({ title, items, onAdd }) {
+// La pregunta antes de quitar un cierre.
+//
+// Dice QUÉ se quita y QUÉ va a pasar, en vez de un "¿seguro?" pelado: quitar un
+// cierre ABRE ese hueco, que es el reverso exacto del fallo que esto arregla —
+// un dedazo aquí acaba con un cliente reservando un día que la barbería está
+// cerrada. Quien pulsa tiene que poder decidir con eso delante.
+//
+// Aviso nativo del navegador a propósito: es el mismo registro que el
+// `window.alert` con el que `saveCollection` ya avisa de un guardado fallido.
+// Una pantalla propia para esto sería un componente nuevo dentro de un fichero
+// de ~2000 líneas sin tests, y una confirmación no lo justifica.
+function confirmarApertura(queSeQuita) {
+  if (typeof window === "undefined") return true;
+  return window.confirm(
+    `¿Quitar ${queSeQuita}?\n\nEse hueco volverá a abrirse y los clientes podrán reservar en él.`
+  );
+}
+
+// Los días se podían añadir y no quitar, así que una fecha mal puesta cerraba
+// ese día para siempre y sólo se arreglaba tocando la base de datos (#99).
+//
+// Se quita por POSICIÓN y no por valor: hoy nada impide apuntar dos veces el
+// mismo día, y filtrar por valor se llevaría los dos de una vez sin que nadie
+// lo haya pedido.
+//
+// Quitar llama al `set...` de la colección, o sea a `saveCollection`, que ya
+// aplica en pantalla, manda la lista entera y DESHACE el cambio si el servidor
+// la rechaza. Por eso aquí no se pinta ningún resultado por cuenta propia: dar
+// por bueno un guardado que no lo fue es exactamente lo que esa función existe
+// para impedir.
+function SettingsBlock({ title, items, onAdd, onRemove }) {
   const [val, setVal] = useState("");
   return (
     <div className="card" style={{ borderRadius: 12, padding: 14 }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 8 }}>{title}</div>
-      {items.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguno</span> : items.map((d, i) => <div key={i} style={{ fontSize: 12.5, padding: "3px 0" }}>{d}</div>)}
+      {items.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguno</span> : items.map((d, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+          <span style={{ fontSize: 12.5, flex: 1 }}>{d}</span>
+          <button onClick={() => onRemove(i)} aria-label={`Quitar ${d}`} title="Quitar" style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", display: "flex", padding: 0 }}><X size={14} /></button>
+        </div>
+      ))}
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <input type="date" value={val} onChange={(e) => setVal(e.target.value)} style={{ background: "#0B0B0A", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, color: BONE, fontSize: 12, padding: "6px 8px", flex: 1 }} />
         <button onClick={() => { if (val) { onAdd(val); setVal(""); } }} className="ghost-btn" style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}>Añadir</button>
