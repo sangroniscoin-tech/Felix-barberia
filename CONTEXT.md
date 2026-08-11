@@ -124,5 +124,11 @@ acceptance criteria on every change from here on:
   has to approve, and asking the customer's permission to write to them. He chose to send
   it himself with one tap. **Nor is the freed hueco held** for whoever is waiting — it goes
   back on the web and the first to book gets it; to keep it he blocks that stretch himself.
+- **No aviso de caída al móvil por push, y no por pereza.** Desde el 2026-08-11 una
+  vigilancia mira cada 10 minutos, a todas horas, que la web sigue cogiendo citas, y avisa
+  por el correo con el que GitHub avisa de un trabajo en rojo. Por push **no puede ser**: ese
+  aviso lo firma el propio servidor con claves que viven en Supabase, así que la avería que
+  hay que contar es justo la que impide contarla. Quien quiera "mejorarlo" moviéndolo al
+  push está rompiéndolo.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.

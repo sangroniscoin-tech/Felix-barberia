@@ -175,6 +175,20 @@ endorsement.
 - The health check must reach the database, not just the page: `/api/health` separates
   "environment variables missing" from "Supabase not answering". A failed load shows a red
   banner — but check the data anyway.
+- **The watch lives outside the thing it watches, and that is not a preference.** The alert
+  cannot ride the Web Push that already rings Félix's phone: `sendPush` signs with the VAPID
+  pair in `push_keys` and reads its devices from `push_subscriptions`, both in Supabase — so
+  in the outage that matters the notice is exactly what the outage prevents. That is why
+  `vigilancia.yml` runs on GitHub Actions, the only piece that does not share fate with the
+  app. It may never move into `api/` (12 functions, the Hobby ceiling), may never join
+  `ci.yml` (the merge gate must go red for one reason only), and **may never act** — no
+  revert, no redeploy, no retry, per mandate zero. It probes with a *past* date so the
+  booking route is exercised without writing a row, and demands the plazo's own
+  `"field":"dateKey"`: name, phone and email validate first, so reaching that rejection is
+  what proves the route ran end to end. One failure never alerts — it retries after 60s, and
+  only a second failure goes red, or the alert stops being read. Two limits are structural,
+  not bugs: GitHub delays crons under load, and it **disables scheduled workflows after 60
+  days without repository activity**, so a parked project loses its watch silently.
 - **`fail()` logs every `api/` error and its response is frozen.** A 500 that only reaches
   the browser is gone the moment the tab closes — that is why the 2026-08-10 one could never
   be diagnosed (#88). It logs route, status, reason, message and stack; the route is taken
