@@ -34,7 +34,13 @@ acceptance criteria on every change from here on:
   he may have to wait up to five minutes to write a booking in by hand.
 - Félix uses the same site's admin panel to see the day, add bookings by hand, block time
   off, set holidays and holidays-of-obligation, manage the waiting list and the photo
-  gallery, and change opening hours.
+  gallery, and change opening hours. **Every closure he sets he can also take back** —
+  festivos, single blocked days, holiday ranges and blocked hours all carry the same X the
+  barbers already had. Until 2026-08-11 they were add-only, so a mistyped date shut that day
+  for good. Taking one back **asks first, naming the day**, and that confirmation is not
+  ceremony: removing a closure *opens* the slot, which is the exact mirror of the bug it
+  fixed — a customer booking a day the shop is shut. Anything new that closes time inherits
+  both halves.
 - **He marks who didn't turn up**, from the day's list once their hour has passed, or from
   the appointment itself. Only the exceptions get marked — nobody confirms attendance one
   by one. That mark is what makes the takings real: an absence is worth €0 and shows up
