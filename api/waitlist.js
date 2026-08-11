@@ -13,6 +13,7 @@
 import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { cleanName, cleanPhone, isValidPhone, isValidDateKey } from "./_lib/shape.js";
 import { normalizarFranja } from "../shared/franja-horaria.js";
+import { haLlegadoAlTopeDeEspera, respuestaTope } from "./_lib/ritmo.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -54,6 +55,17 @@ export default async function handler(req, res) {
   const anyDate = body.anyDate === true || body.anyDate === "true";
 
   try {
+    // El mismo tope que las citas, porque esto es la misma puerta con otro
+    // nombre: pública, sólo inserta, y hasta ahora sin techo. La cuenta es
+    // APARTE de la de las citas — quien acaba de reservar sigue pudiendo
+    // apuntarse aquí, que es una cosa normal y no un abuso.
+    //
+    // Esta ruta no tiene pase de administrador que valga: Félix no se apunta a
+    // su propia lista de espera, la gestiona desde el panel por otro camino.
+    if (await haLlegadoAlTopeDeEspera(supabase, phone)) {
+      return respuestaTope(res, "espera");
+    }
+
     // El servicio se comprueba contra la tabla, igual que al crear una cita:
     // no se acepta cualquier cadena que mande el navegador.
     let serviceId = null;

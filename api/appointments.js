@@ -12,6 +12,7 @@ import { conflictingHold } from "./_lib/holds.js";
 import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { motivoFueraDePlazo } from "../shared/plazo-reserva.js";
+import { haLlegadoAlTopeDeCitas, respuestaTope } from "./_lib/ritmo.js";
 import { bookingNotice, cancellationNotice } from "./_lib/notify.js";
 import { cuantosEsperanPor } from "./_lib/espera.js";
 import { sendPush } from "./_lib/push.js";
@@ -131,6 +132,18 @@ export default async function handler(req, res) {
     }
 
     try {
+      // El tope de reservas por rato, antes de crear nada. Va aquí dentro y no
+      // arriba con el plazo porque hay que preguntarle a la base de datos, y
+      // un fallo al preguntar tiene que salir por el mismo sitio que los demás.
+      //
+      // Exento con un pase válido, exactamente igual que el plazo y que el
+      // tope de personas: Félix apunta desde su panel toda la mañana lo que le
+      // van pidiendo por teléfono. Un pase ausente, caducado o inventado cae al
+      // límite público.
+      if (requireAdmin(req) !== null && await haLlegadoAlTopeDeCitas(supabase, phone)) {
+        return respuestaTope(res, "citas");
+      }
+
       // La duración y el precio se toman de los servicios en el servidor, no de
       // lo que mande el navegador: si no, cualquiera podría reservar 5 minutos
       // a 0 €. Y las horas de cada persona se encadenan aquí por lo mismo.
