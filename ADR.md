@@ -102,10 +102,18 @@ endorsement.
   phone** — client lists, both rankings. They must filter those rows out or they collapse
   into one phantom client; they stay in the money and the counts, where they represent
   nobody. Anything new that keys on `phone` inherits this.
-- **The published privacy notice still names Gmail as a recipient**, which stopped being
-  true with #53: no data leaves for Google at all now. It over-discloses rather than
-  under-discloses, so it is not urgent — but it is a legal document describing a route that
-  no longer exists, and correcting it is its own issue, never a drive-by edit.
+- **Nothing this app loads reaches a third party, and the privacy notice now says so.** The
+  browser's only automatic connections are to its own origin and, through `api/`, to
+  Supabase. That took two corrections in opposite directions on 2026-08-12: the notice named
+  a Gmail that #53 had already made false, while the real leak — an `@import` fetching the
+  typefaces from Google on every visit, handing over each visitor's IP — was the one thing it
+  did not mention. So the fonts are **self-hosted from `public/fonts/`** (#111) and the notice
+  lists Supabase and Vercel only (#113). Both halves are load-bearing: re-adding a CDN font,
+  an analytics snippet or any remote asset silently makes a published legal document false,
+  which is why **the code and that page move together** and neither is a drive-by edit. The
+  `@font-face` rules are Google's own, copied with the URL swapped — "simplifying" them
+  changes how the site looks. Maps and Calendar links stay out of the notice: they open only
+  when a customer taps them, which is their visit to Google, not a disclosure by the shop.
 - **The notification takes Félix to the person, and travels without an id.** The push `url`
   carries `?aviso=reserva|cancelada&dia=&hora=` — day and time, which the notice's own text
   already shows on the lock screen; **never the appointment id**, which is a cancellable
