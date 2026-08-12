@@ -124,6 +124,12 @@ acceptance criteria on every change from here on:
 - **No cookie banner, and that is correct.** No analytics, no trackers, nothing in
   `localStorage` or `document.cookie` — only the admin session, which is strictly
   necessary. Adding a banner would be theatre, and the privacy notice says so in writing.
+- **Nada de lo que carga esta web sale hacia un tercero, y el aviso ya lo afirma.** Se lo
+  ofreció el 2026-08-12 y dijo que sí: las letras venían de un servidor de Google en cada
+  visita —entregándole la IP de cada cliente— y ahora se sirven desde la propia web. Se le
+  planteó como lo que era, una elección suya entre quitarlo o declararlo, y eligió quitarlo.
+  **Es una promesa que se rompe sola**: meter una fuente de un CDN, un contador de visitas o
+  cualquier imagen remota vuelve a mandar clientes fuera y deja el aviso mintiendo.
 - **The gallery photos still come from the code**, not from the database. Uploading them
   needs file storage; it was left out of the Supabase migration on purpose.
 - **No restore button, and no copy that uploads itself.** The backup is a file he
