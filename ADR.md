@@ -186,9 +186,26 @@ endorsement.
   booking route is exercised without writing a row, and demands the plazo's own
   `"field":"dateKey"`: name, phone and email validate first, so reaching that rejection is
   what proves the route ran end to end. One failure never alerts — it retries after 60s, and
-  only a second failure goes red, or the alert stops being read. Two limits are structural,
-  not bugs: GitHub delays crons under load, and it **disables scheduled workflows after 60
-  days without repository activity**, so a parked project loses its watch silently.
+  only a second failure goes red, or the alert stops being read.
+- **The watch keeps its own clock, because GitHub's `cron` is not one.** Asked for `*/10` it
+  fired every 2–3 hours (measured over its first 8 runs), and no smaller number fixes that —
+  scheduled events are delayed and dropped under load. So one run now probes, sleeps ten
+  minutes and probes again for a five-hour shift, and the `cron` **changed job**: hourly, it
+  only *rearms* the watcher, landing well inside that window even when delayed. Three things
+  hold it up and none is cosmetic. `concurrency` with `cancel-in-progress` keeps exactly one
+  watcher alive, or every `cron` tick would add another. The loop ends **by clock, not by
+  counting laps** — a probe can take ~80s when its curls time out, and a run that overruns
+  `timeout-minutes` goes red exactly like a real outage. And **what ended the loop is carried
+  in a flag, never inferred from the time on the way out**: a failure on the last lap leaves
+  the clock already past the shift's end, which reading the hour would report as a quiet
+  shift — the watch going silent precisely when it has something to say. On a real failure it
+  alerts and **stops**: the alert *is* the email GitHub sends when the run concludes, so
+  staying in the loop would delay it by hours; the next hourly rearm means a still-broken site
+  keeps producing one every few hours. It is free only because the repository is **public**
+  (unlimited standard-runner minutes); going private makes this burn quota and needs a
+  rethink. Two limits remain: if the runner dies nobody watches until the rearm, and GitHub
+  **disables scheduled workflows after 60 days without repository activity**, so a parked
+  project loses its watch silently.
 - **`fail()` logs every `api/` error and its response is frozen.** A 500 that only reaches
   the browser is gone the moment the tab closes — that is why the 2026-08-10 one could never
   be diagnosed (#88). It logs route, status, reason, message and stack; the route is taken
