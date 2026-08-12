@@ -95,6 +95,13 @@ acceptance criteria on every change from here on:
   enviado**, como todo lo que sale de este panel. No se pregunta el motivo, y no se apunta
   si avisó: la cita queda cancelada igual. Sin teléfono —los datos viejos se purgan— la
   ventana lo dice en vez de ofrecer un botón que no lleva a ningún sitio.
+- **Desde la ficha de cualquier cita puede escribirle a esa persona por WhatsApp**, y ahí
+  el chat se abre **vacío a propósito** — lo eligió él el 2026-08-12 frente a un saludo ya
+  puesto y frente a un menú de mensajes hechos, porque lo quiere «por cualquier necesidad»
+  y cualquier texto previo es texto que borrar. Esa es la regla de los tres WhatsApp del
+  panel: **el mensaje se escribe cuando se sabe a qué se escribe** —un hueco libre, una
+  cita anulada— y se deja vacío cuando no. Rellenarlo aquí «para ayudar» es deshacerlo.
+  Sin teléfono no hay botón, y en una cita cancelada sí lo hay, igual que «Llamar».
 - Everything is in Spanish, for customers in Zaragoza. It is installable as a phone app
   (PWA) and is used mostly on phones.
 - Services and prices live in the data store, not the code, and Félix can change them
@@ -131,10 +138,13 @@ acceptance criteria on every change from here on:
   it himself with one tap. **Nor is the freed hueco held** for whoever is waiting — it goes
   back on the web and the first to book gets it; to keep it he blocks that stretch himself.
 - **No aviso de caída al móvil por push, y no por pereza.** Desde el 2026-08-11 una
-  vigilancia mira cada 10 minutos, a todas horas, que la web sigue cogiendo citas, y avisa
-  por el correo con el que GitHub avisa de un trabajo en rojo. Por push **no puede ser**: ese
-  aviso lo firma el propio servidor con claves que viven en Supabase, así que la avería que
-  hay que contar es justo la que impide contarla. Quien quiera "mejorarlo" moviéndolo al
-  push está rompiéndolo.
+  vigilancia comprueba a todas horas que la web sigue cogiendo citas y avisa por el correo
+  con el que GitHub avisa de un trabajo en rojo. Pide correr cada 10 minutos, pero medido
+  el 2026-08-12 sobre sus 8 primeras ejecuciones corre **cada 2 o 3 horas**: GitHub retrasa
+  los relojes programados de los repositorios gratuitos, y eso no se arregla desde el
+  fichero. Sirve para enterarse el mismo día, no en diez minutos; prometerle otra cosa al
+  cliente es mentirle. Por push **no puede ser**: ese aviso lo firma el propio servidor con
+  claves que viven en Supabase, así que la avería que hay que contar es justo la que impide
+  contarla. Quien quiera "mejorarlo" moviéndolo al push está rompiéndolo.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.
