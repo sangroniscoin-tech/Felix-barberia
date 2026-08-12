@@ -137,14 +137,15 @@ acceptance criteria on every change from here on:
   has to approve, and asking the customer's permission to write to them. He chose to send
   it himself with one tap. **Nor is the freed hueco held** for whoever is waiting — it goes
   back on the web and the first to book gets it; to keep it he blocks that stretch himself.
-- **No aviso de caída al móvil por push, y no por pereza.** Desde el 2026-08-11 una
-  vigilancia comprueba a todas horas que la web sigue cogiendo citas y avisa por el correo
-  con el que GitHub avisa de un trabajo en rojo. Pide correr cada 10 minutos, pero medido
-  el 2026-08-12 sobre sus 8 primeras ejecuciones corre **cada 2 o 3 horas**: GitHub retrasa
-  los relojes programados de los repositorios gratuitos, y eso no se arregla desde el
-  fichero. Sirve para enterarse el mismo día, no en diez minutos; prometerle otra cosa al
-  cliente es mentirle. Por push **no puede ser**: ese aviso lo firma el propio servidor con
-  claves que viven en Supabase, así que la avería que hay que contar es justo la que impide
-  contarla. Quien quiera "mejorarlo" moviéndolo al push está rompiéndolo.
+- **No aviso de caída al móvil, y no por pereza.** Desde el 2026-08-11 una vigilancia
+  comprueba **cada 10 minutos**, a todas horas, que la web sigue cogiendo citas, y avisa por
+  el correo con el que GitHub avisa de un trabajo en rojo. Los 10 minutos son de verdad desde
+  el 2026-08-12: antes GitHub la lanzaba cada 2 o 3 horas, y se arregló trayéndose el reloj
+  dentro en vez de subir un número. **Por push no puede ser**: ese aviso lo firma el propio
+  servidor con claves que viven en Supabase, así que la avería que hay que contar es justo la
+  que impide contarla — quien quiera "mejorarlo" moviéndolo al push está rompiéndolo. **Que
+  le suene el móvil con la app de GitHub se le ofreció el 2026-08-12 y lo declinó**: le vale
+  el correo. Es lo único que haría el aviso instantáneo en su bolsillo, así que si algún día
+  se queja de enterarse tarde, ese es el sitio por donde se retoma, no la frecuencia.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.
