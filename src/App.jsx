@@ -5082,6 +5082,13 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
   const b = barbers?.find((x) => x.id === appt.barberId);
   const cancelada = !!appt.cancelada;
   const cuando = cancelada && appt.cancelledAt ? fmtMomento(appt.cancelledAt) : null;
+  // El WhatsApp de ESTE cliente, para escribirle por lo que haga falta (#103).
+  // Sin `?text=`, y eso es lo que lo diferencia de los otros dos WhatsApp de la
+  // app: la lista de espera y el aviso de cancelación abren el chat con un
+  // mensaje ya escrito porque se sabe a qué se escribe, y aquí no. Se pidió
+  // "por cualquier necesidad", así que un texto puesto sería un texto que borrar.
+  // Vacío o no, sigue sin mandarse nada solo: `wa.me` abre el chat y envía Félix.
+  const numeroCliente = waMeNumero(appt.phone);
   return (
     <ModalShell title={cancelada ? "Cita cancelada" : appt.groupId ? "Cita de una reserva de grupo" : "Cita"} onClose={onClose}>
       <Row label="Cliente" value={shownName(appt)} />
@@ -5122,6 +5129,28 @@ function ApptModal({ appt, services, barbers, groupSize, onClose, onCancel, onTo
           <button onClick={onCancel} style={{ flex: 1, background: "#3a1414", border: "1px solid #6b2323", color: "#f2a6a6", padding: 12, borderRadius: 10, fontSize: 13, cursor: "pointer" }}>Cancelar cita</button>
         )}
       </div>
+      {/* Va en su propia fila y no dentro de la de arriba a propósito: tres
+          botones ahí dejarían "Cancelar cita" en una tira estrecha en un móvil
+          de 360px, y ese es justo el botón que no puede pulsarse sin querer.
+          Así nada de lo que ya había cambia de tamaño ni de sitio.
+
+          Sin teléfono no hay botón. Los datos de las citas viejas se purgan, y
+          un botón que abre un chat con un número vacío es un botón que miente
+          — el mismo criterio que ya usa AvisarCanceladaModal.
+
+          En una cita cancelada TAMBIÉN sale, por lo mismo que ahí sigue estando
+          "Llamar": a veces hay que escribirle justo después de anulársela. */}
+      {numeroCliente && (
+        <a
+          href={`https://wa.me/${numeroCliente}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ghost-btn"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 8, padding: 12, borderRadius: 10, fontSize: 13, textDecoration: "none", color: BONE }}
+        >
+          <MessageCircle size={16} /> WhatsApp
+        </a>
+      )}
       {!cancelada && (
         <button onClick={onToggleNoShow} className="ghost-btn" style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
           {appt.noShow ? "Quitar marca de no presentado" : "Marcar como no se presentó"}
