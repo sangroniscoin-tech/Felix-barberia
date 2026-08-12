@@ -26,13 +26,14 @@ const RESPONSABLE_NIF = "61564701A";
 const RESPONSABLE_DOMICILIO = "Calle Cereros 22, 50003 Zaragoza";
 // El correo al que un cliente escribe para ejercer sus derechos. Es la vía
 // principal del aviso; el WhatsApp y el domicilio siguen valiendo igual.
-// A dónde llegan los avisos ya no se decide aquí: lo lleva fijo dentro el
-// script de Google, que es lo que impide que cualquiera lo use para escribir a
-// quien quiera. Éste es otra cosa —a dónde escribe un cliente para ejercer sus
-// derechos— y es el único que sigue viviendo en el código.
+// No es la dirección por la que se entera Félix de una reserva: eso va por Web
+// Push desde el servidor y no pasa por ningún correo (#53). Ésta es otra cosa
+// —a dónde escribe un CLIENTE para ejercer sus derechos— y por eso es la única
+// que sigue viviendo en el código. Que sea un gmail.com es de quién la lee, no
+// de por dónde viajan los datos: a Google no sale nada de esta web.
 const RESPONSABLE_EMAIL = "felixbarberiazgz@gmail.com";
 // Se cambia a mano cuando se cambie el texto del aviso.
-const PRIVACIDAD_ACTUALIZADO = "3 de agosto de 2026";
+const PRIVACIDAD_ACTUALIZADO = "12 de agosto de 2026";
 // Cuánto se guardan los datos de una cita ya pasada.
 const PRIVACIDAD_CONSERVACION = "un año";
 
@@ -1586,8 +1587,13 @@ function Privacidad({ embedded = false }) {
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li><strong style={{ color: BONE }}>Supabase</strong> — la base de datos donde se guardan las citas. Los servidores están en la Unión Europea (Irlanda, <span style={{ whiteSpace: "nowrap" }}>eu-west-1</span>).</li>
           <li><strong style={{ color: BONE }}>Vercel</strong> — donde está alojada esta web.</li>
-          <li><strong style={{ color: BONE }}>Google (Gmail)</strong> — para avisar a la barbería de que alguien ha reservado o ha cancelado. Ese aviso lleva <strong style={{ color: BONE }}>solo el día, la hora y el servicio</strong>: ni tu nombre, ni tu teléfono, ni tu correo. Para saber de quién es la cita, la barbería entra en su panel. <strong style={{ color: BONE }}>Ningún dato tuyo sale hacia Gmail.</strong></li>
         </ul>
+        <p style={{ margin: "8px 0 0" }}>
+          Esta web <strong style={{ color: BONE }}>no llama a Google</strong> ni a ninguna otra
+          empresa mientras la usas: ni para las letras con las que está escrita, que se sirven
+          desde aquí mismo, ni para avisar a la barbería de tu cita, que se le avisa desde este
+          mismo sitio. Tampoco hay estadísticas ni publicidad de nadie.
+        </p>
         <p style={{ margin: "8px 0 0" }}>
           <strong style={{ color: BONE }}>No vendemos ni cedemos tus datos a nadie más</strong>, no te
           mandamos publicidad, y no hacemos perfiles ni decisiones automáticas sobre ti.
