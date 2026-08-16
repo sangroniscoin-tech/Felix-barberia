@@ -71,9 +71,11 @@ acceptance criteria on every change from here on:
 - **Se descarga su propia copia de seguridad** desde el panel: un archivo con todo —citas,
   clientes, lista de espera, servicios, horarios, festivos, vacaciones y cierres— que le
   dice cuántas filas lleva dentro, y una fecha de la última copia que se pone en ámbar
-  pasado el mes. Cae en su móvil y **es él quien la manda a otro sitio**; se le explicó que
-  una copia que vive en el móvil que puedes perder no es una copia. Lleva nombres y
-  teléfonos: es el mismo fichero de clientes del que ya es responsable.
+  **a los siete días**, que es la cadencia acordada con él (#117); nació en un mes y el
+  aviso se quedó atrás cuando la costumbre pasó a ser semanal. Cae en su móvil y **es él
+  quien la manda a otro sitio**; se le explicó que una copia que vive en el móvil que
+  puedes perder no es una copia. Lleva nombres y teléfonos: es el mismo fichero de
+  clientes del que ya es responsable.
 - **His phone rings when a customer books or cancels** — not when he writes a booking in
   himself, which he already knows about. The notice says only the day, the hour and the
   service, because it lands on a lock screen; tapping it opens the panel on that day with
