@@ -4959,10 +4959,11 @@ function AvisosCard() {
   );
 }
 
-// Cuánto puede pasar sin copia antes de que la fecha se ponga en ámbar. Un mes
-// contado en días naturales, como el plazo de reserva: es predecible y no tiene
-// casos raros con meses de 28 o de 31.
-const DIAS_AVISO_COPIA = 30;
+// A los cuántos días sin copia se pone la fecha en ámbar. Una semana, que es
+// la cadencia acordada con Félix; nació en un mes y el aviso se quedó atrás
+// cuando la costumbre pasó a ser semanal. Contado en días naturales, como el
+// plazo de reserva: es predecible y no tiene casos raros.
+const DIAS_AVISO_COPIA = 7;
 // El ámbar del recordatorio. No es el dorado de la casa a propósito: el dorado
 // es el color de todo lo normal aquí, y algo que quiere llamar la atención no
 // puede ser del mismo color que el resto de la pantalla.
@@ -4972,8 +4973,9 @@ const AMBAR = "#E8A33D";
 //
 // El recordatorio es la mitad que importa: una copia que se hizo una vez y
 // nunca más no protege de nada. Por eso la fecha se enseña siempre —también
-// cuando está al día, en gris y pequeña— y sólo cambia de color cuando lleva
-// más de un mes. Sin ventanas emergentes: dar la lata acaba en que se ignora.
+// cuando está al día, en gris y pequeña— y sólo cambia de color cuando la
+// semana se ha cumplido. Sin ventanas emergentes: dar la lata acaba en que se
+// ignora.
 // `sabido` es si la fecha de la última copia ha llegado de verdad. Viene en la
 // misma carga que las citas, así que un fallo la borra de la pantalla — y "no
 // te has bajado ninguna" es lo peor que se le puede decir a alguien que sí la
@@ -4990,7 +4992,12 @@ function CopiaCard({ lastBackup, sabido = true, descargarCopia }) {
     return Math.floor((Date.now() - t) / 86400000);
   }, [lastBackup, sabido]);
 
-  const vieja = dias !== null && dias > DIAS_AVISO_COPIA;
+  // "A partir de" y no "más de": con un plazo semanal, avisar al superarlo
+  // dejaría el aviso para el día ocho y la semana se iría corriendo sola cada
+  // vez. El día que se cumple es el día que se avisa. El nulo se descarta
+  // antes de mirar el número: cuando la fecha no se sabe —o no ha llegado— no
+  // se enciende nada, que es distinto de estar al día.
+  const vieja = dias !== null && dias >= DIAS_AVISO_COPIA;
 
   function cuando() {
     if (!sabido) return "No he podido cargar cuándo fue la última copia.";
