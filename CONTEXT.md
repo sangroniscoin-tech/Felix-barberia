@@ -134,6 +134,11 @@ acceptance criteria on every change from here on:
   cualquier imagen remota vuelve a mandar clientes fuera y deja el aviso mintiendo.
 - **The gallery photos still come from the code**, not from the database. Uploading them
   needs file storage; it was left out of the Supabase migration on purpose.
+- **Las fotos de los servicios son suyas y no se repiten** (#119). Se quejó de dos
+  servicios con la misma foto —ya se había "arreglado" una vez— y se le ofreció mandarlas
+  él, elegirlas yo, o mezcla: eligió que las eligiera yo. Se guardan en `public/servicios/`,
+  así que además dejaron de pedirse a Unsplash, que era lo que rompía la promesa de arriba
+  sin que nadie lo viera.
 - **No restore button, and no copy that uploads itself.** The backup is a file he
   downloads and forwards by hand: sending it anywhere on its own means another service and
   another credential, and restoring is a rare, dangerous operation done with someone

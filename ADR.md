@@ -114,6 +114,15 @@ endorsement.
   `@font-face` rules are Google's own, copied with the URL swapped — "simplifying" them
   changes how the site looks. Maps and Calendar links stay out of the notice: they open only
   when a customer taps them, which is their visit to Google, not a disclosure by the shop.
+  The fonts were not the last leak: the **service photos were still `<img>`s on Unsplash**
+  for four days after, found only because a customer-facing bug led to them (#119). They now
+  live in `public/servicios/`; **the gallery's four are the only remote assets left**.
+- **A service's photo is a property of the whole list, not of the service.** `repartirFotos`
+  hands out each photo once and renders no `<img>` at all past the end of the pool. It
+  replaced a per-service hash of the id, which cannot see what the others took and so put one
+  photo on two services — twice, since the first fix only widened the pool. **Never choose
+  per-service again**: any hash over a finite pool collides, invisibly, until a customer sees
+  it. Growing the list means adding files, never weakening the guarantee.
 - **The notification takes Félix to the person, and travels without an id.** The push `url`
   carries `?aviso=reserva|cancelada&dia=&hora=` — day and time, which the notice's own text
   already shows on the lock screen; **never the appointment id**, which is a cancellable

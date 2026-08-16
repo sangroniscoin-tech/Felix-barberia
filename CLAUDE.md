@@ -206,7 +206,7 @@ deployment unreachable — `curl` to the site still works for checking state.
 | Google Apps Script | **nothing calls it any more** (#53). Still deployed, still unreachable by any connector | only if it is ever revived, which nothing needs |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
-| Unsplash | four hotlinked photos | none — if Unsplash changes them, the gallery changes |
+| Unsplash | **the gallery's four hotlinked photos, and only those** — the service photos were downloaded into `public/servicios/` in #119 | none — if Unsplash changes them, the gallery changes. The gallery is now the last thing on this page that reaches a third party from the browser |
 
 New services come in agent-reachable or not at all lightly: a Claude connector first, an
 MCP server or skill second, dashboard-only as a last resort that turns every future change
