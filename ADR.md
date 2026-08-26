@@ -183,6 +183,19 @@ endorsement.
   price" and no row was ever backfilled. Written only by `PATCH /api/cobro`, admin pass
   checked before the body is parsed, one appointment at a time even inside a group — a
   discount belongs to one client, unlike the payment mark it replaced.
+- **El único reintento que existe aquí es el del reloj desajustado, y es así de estrecho a
+  propósito.** El `fetch` que `api/_lib/supabase.js` le pasa a `createClient` repite una
+  llamada **sólo** cuando el cuerpo de la respuesta trae la marca de que Supabase rechazó la
+  credencial por haberse emitido en el futuro / no ser válida todavía — el rechazo ocurre en
+  su puerta, antes de que la sentencia llegue a Postgres, así que no se escribió nada y
+  repetirla es seguro. **Nunca por "cualquier 401", ni "cualquier 5xx", ni un fallo de red:
+  un reintento amplio sobre una escritura duplica una cita.** Convertirlo en genérico es
+  reintroducir la doble reserva. Se mira sobre `res.clone()` para no dejar sin cuerpo a quien
+  llamó; como mucho 2 intentos extra con esperas de 300 ms y 1 s; cada uno deja un
+  `console.warn`, porque una llamada que se salva al segundo intento no pasa por `fail()` y
+  sin esa línea el tropiezo es invisible. Agotados los intentos **no cambia nada**: el mismo
+  error sube a `fail()`, que contesta exactamente lo mismo que hoy. Vive en el único sitio
+  donde se crea el cliente, así que las trece rutas lo heredan sin tocar ningún `handler()`.
 
 **Getting to production**
 
