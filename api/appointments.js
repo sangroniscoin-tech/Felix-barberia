@@ -71,6 +71,79 @@ function maxPeopleFor(req) {
   return requireAdmin(req) === null ? MAX_GROUP_PEOPLE_ADMIN : MAX_GROUP_PEOPLE;
 }
 
+// ¿La cita que ocupa el hueco es de esta misma persona?
+//
+// Cuando la restricción de solapamiento rechaza el insert, ni el servidor ni
+// el navegador miraban DE QUIÉN era la cita que estorbaba: los dos daban por
+// hecho que era de un tercero y lo decían. Muchas veces ese "tercero" era el
+// propio cliente medio minuto antes — la respuesta del primer intento no le
+// llegó al móvil y volvió a darle al botón. Se le acusaba a alguien inventado
+// de quitarle un hueco que ya era suyo, y se iba creyendo que no tenía cita.
+//
+// Aquí se mira antes de acusar a nadie. Devuelve las filas de la reserva que
+// YA existe cuando coincide exactamente con lo que se estaba pidiendo, o null.
+// Ante cualquier duda —otro teléfono, otro servicio, otro número de personas,
+// un fallo al preguntar— devuelve null y se contesta el mensaje de siempre:
+// equivocarse hacia el mensaje de hoy no rompe nada, equivocarse hacia la
+// confirmación le enseñaría a alguien una cita que no es la suya.
+//
+// Esto NO afloja la garantía: sigue siendo la restricción de exclusión de
+// Postgres la que rechaza. Lo único que cambia es qué se contesta después.
+async function reservaYaGuardada(supabase, { phone, dateKey, barberId, starts, serviceIds }) {
+  const grouped = starts.length > 1;
+
+  // La cita que ocupa la PRIMERA hora del tramo que se pedía. Una cancelada no
+  // cuenta: el hueco volvió a estar libre y esto sería una reserva nueva.
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("*")
+    .eq("customer_phone", phone)
+    .eq("appointment_date", dateKey)
+    .eq("barber_id", barberId)
+    .eq("start_time", starts[0])
+    .neq("status", "cancelled");
+  if (error) throw new Error(error.message);
+  // Exactamente una. La restricción de exclusión no deja dos sin cancelar a la
+  // misma hora con el mismo barbero, así que otra cosa es algo que no entiendo
+  // y no es sobre lo que se contesta una confirmación.
+  if (!data || data.length !== 1) return null;
+  const anchor = data[0];
+
+  // Una sola persona. Tiene que ser una cita suelta y del mismo servicio: si
+  // lo que hay guardado es un grupo, o es otro servicio, no es esta reserva.
+  if (!grouped) {
+    if (anchor.group_id != null) return null;
+    if (anchor.service_id !== serviceIds[0]) return null;
+    return [anchor];
+  }
+
+  // Un grupo se busca entero por su `group_id`: devolver sólo la fila que
+  // chocó dejaría al cliente viendo la confirmación de una persona cuando
+  // reservó tres.
+  if (anchor.group_id == null) return null;
+  const { data: rows, error: gErr } = await supabase
+    .from("appointments")
+    .select("*")
+    .eq("group_id", anchor.group_id)
+    .neq("status", "cancelled");
+  if (gErr) throw new Error(gErr.message);
+  if (!rows) return null;
+
+  const ordered = rows.slice().sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+  // Distinto número de personas, distintas horas, distintos servicios: no es
+  // la misma reserva llegando dos veces.
+  if (ordered.length !== starts.length) return null;
+  for (let i = 0; i < ordered.length; i++) {
+    const r = ordered[i];
+    if (r.customer_phone !== phone) return null;
+    if (String(r.appointment_date) !== String(dateKey)) return null;
+    if (r.barber_id !== barberId) return null;
+    if (String(r.start_time).slice(0, 5) !== starts[i]) return null;
+    if (r.service_id !== serviceIds[i]) return null;
+  }
+  return ordered;
+}
+
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
 }
@@ -221,6 +294,50 @@ export default async function handler(req, res) {
         // 23P01 = lo rechazó la restricción de solapamiento: alguien cogió el
         // hueco primero. No es un fallo nuestro, es la garantía funcionando.
         if (error.code === "23P01") {
+          // Antes de decirle a nadie que le han quitado el hueco: mirar de
+          // quién es. Si la cita que estorba es de este mismo teléfono, el
+          // mismo día, la misma hora y el mismo barbero, no es un choque —
+          // es la misma reserva llegando dos veces, porque la respuesta de la
+          // primera no llegó o porque volvió a darle al botón.
+          let yaGuardada = null;
+          try {
+            yaGuardada = await reservaYaGuardada(supabase, {
+              phone,
+              dateKey,
+              barberId: barber.id,
+              starts,
+              serviceIds: chosen.map((s) => s.id),
+            });
+          } catch (e) {
+            // Mirar de quién es el hueco va ENCIMA del rechazo, nunca en su
+            // lugar: si falla, se contesta exactamente lo de siempre.
+            console.warn("[reserva] no se pudo comprobar si el hueco ya era suyo:", e.message);
+            yaGuardada = null;
+          }
+
+          if (yaGuardada) {
+            // La reserva temporal sobra igual que en el camino normal: la
+            // cita existe. Que no se borre no rompe nada, caduca sola.
+            if (holdId) {
+              try {
+                await supabase.from("slot_holds").delete().eq("id", holdId);
+              } catch {
+                // Caduca sola.
+              }
+            }
+            const mismo = yaGuardada.map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
+            // AQUÍ NO SE INSERTA NADA: la respuesta se construye con la fila
+            // que ya estaba en la base de datos, y eso es lo que garantiza que
+            // de aquí no puede salir una cita duplicada.
+            //
+            // Y NO se llama a `tellShop`: no se ha reservado nada nuevo, así
+            // que el móvil de Félix no tiene por qué volver a sonar. Un aviso
+            // repetido por una reserva que no existe es ruido que enseña a
+            // ignorar los avisos.
+            return res.status(201).json({ ok: true, appointment: mismo[0], appointments: mismo });
+          }
+
+          // De otra persona: no cambia nada, palabra por palabra.
           return res.status(409).json({
             ok: false,
             reason: "slot_taken",

@@ -2114,22 +2114,23 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     setSubmitting(true);
     setBookingError(null);
     const currentHold = holdRef.current;
-    const latest = await refreshAppointments();
-    const stillFree = computeAvailableSlots({
-      date: selectedDate, durationMin: totalDuration, barberId, appointments: latest,
-      blockedRanges, blockedDays, festivos, vacationRanges, schedule,
-      holds: latestHoldsRef.current, ownHoldId: currentHold ? currentHold.id : null,
-    }).includes(selectedTime);
-
-    if (!stillFree) {
-      setSubmitting(false);
-      setBookingError(groupBooking
-        ? "Justo ahora alguien ha cogido una de esas horas y ya no cabéis seguidos. No se ha guardado ninguna cita: elige otro rato, por favor."
-        : "Justo ahora alguien ha reservado esa hora. Elige otro horario disponible, por favor.");
-      setSelectedTime(null);
-      dropHold();
-      setStep(dateStepNum);
-      return;
+    // Se relee la disponibilidad para que la pantalla no se quede con datos
+    // viejos, pero ESTO YA NO CORTA LA RESERVA. Antes, si el hueco aparecía
+    // ocupado, aquí mismo se enseñaba "alguien ha reservado esa hora" y no se
+    // llegaba a preguntarle a nadie — y el navegador no puede acertar: los
+    // bloques de ocupación que recibe no llevan teléfono ni identificador
+    // (`ADR.md`, "nothing public carries a person"), así que le es imposible
+    // saber de quién es la cita que estorba. Muchas veces era del propio
+    // cliente, y se le decía que se lo habían quitado.
+    //
+    // Pasa a ser lo que `ADR.md` manda que sea: una cortesía encima de la
+    // garantía, nunca la garantía. Decide el servidor, que es el único que
+    // sabe de quién es el hueco. Y si la cortesía falla, tampoco corta.
+    try {
+      await refreshAppointments();
+    } catch {
+      // Una disponibilidad que no se ha podido releer no es motivo para no
+      // mandar la reserva: la garantía está en la base de datos.
     }
 
     let appts;
