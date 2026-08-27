@@ -13,10 +13,13 @@
 // cita, un precio ni un cierre. La única escritura que acompaña a esto —la
 // fecha de la última copia— vive aparte, en /api/admin.
 
-// Qué versión de este formato es el fichero. Es lo que permitirá leer dentro
-// de dos años una copia hecha hoy: si las tablas cambian de forma, este número
-// sube y quien la lea sabrá contra qué esquema mirarla.
-export const FORMATO_COPIA = 1;
+// Qué versión de este formato es el fichero, y la marca de la casa. Viven en
+// `shared/` porque los mira también el navegador al elegir un archivo para
+// restaurar (#125): si cada lado conociera un número, rechazarían archivos
+// distintos. Se vuelven a exportar desde aquí para que quien ya leía la copia
+// no tenga que enterarse de la mudanza.
+export { FORMATO_COPIA, APP_COPIA } from "../../shared/formato-copia.js";
+import { FORMATO_COPIA, APP_COPIA } from "../../shared/formato-copia.js";
 
 // Las tablas de negocio, con la columna por la que se ordenan. El orden no es
 // decorativo: dos copias seguidas tienen que salir iguales, y sin ORDER BY
@@ -90,7 +93,7 @@ export async function armarCopia(supabase, ahora = new Date()) {
   }
 
   return {
-    app: "felix-barberia",
+    app: APP_COPIA,
     format_version: FORMATO_COPIA,
     generated_at: ahora.toISOString(),
     counts,

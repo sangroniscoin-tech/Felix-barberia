@@ -268,6 +268,23 @@ endorsement.
   like a complete one. Anything new that dumps or counts rows inherits that. It writes
   nothing but the last-backup stamp, and that stamp is taken from the **server's** clock,
   never from the request.
+- **Restoring a backup only ever adds.** `_lib/restaurar.js`, reached by the `POST` branch
+  of the same `/api/admin-data` that serves the copy, inserts with `ignoreDuplicates: true`
+  — `ON CONFLICT DO NOTHING` — and holds no `.delete()` and no `.update()`, ever. That is
+  what makes the one button capable of destroying good data not exist: pressing it with the
+  wrong file cannot hurt, which is also why it carries no nuclear warning. A `23P01` from
+  `appointments_no_overlap` **skips the clashing row and nothing else** — the batch is
+  retried row by row so one clash cannot cost the other 191 — and the appointment already
+  sitting in that slot is a real customer's: it is never moved, deleted, or the constraint
+  relaxed to fit the copy in. And rows over a year old come back **without their person** —
+  `customer_name`/`customer_phone` empty, `customer_email` and `raw_*` NULL, `waitlist` not
+  at all — mirroring `purge_expired_personal_data` exactly, because the published privacy
+  notice says that data is erased: restoring it raw would resurrect data that was legally
+  gone and make a published legal document false. The money and the counts come back; the
+  person does not. Tables are written in dependency order (`services`/`barbers` before
+  `appointments`/`waitlist`), and what the copy never carried — `push_keys`,
+  `push_subscriptions`, `slot_holds`, `app_meta` — is still not touched: restoring is not
+  making a backup, so the last-backup stamp does not move.
 - Every PR closes its issue, and the issue's label is its stage. Auto-close doesn't
   always fire, so the issue is verified closed by hand.
 - **One issue solves one problem, and one PR closes one issue.** Bundling is what makes a
