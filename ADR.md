@@ -43,6 +43,19 @@ endorsement.
   enforces it. The old guarantee was a read-then-write check in the browser, which is
   what silently lost a booking when two people reserved in the same second. Never make
   an availability check the guarantee again — it can only be a courtesy on top.
+- **A booking the overlap constraint rejects is checked against its own customer before
+  anyone is blamed.** On `23P01`, `api/appointments.js` looks for a non-cancelled appointment
+  with the same phone, date, start time, barber, service and party size; finding one, it
+  returns `201` with **that already-existing row**. It inserts nothing and never calls
+  `tellShop`, which is what makes the retry idempotent and keeps Félix's phone from ringing
+  twice for one booking. Anything that does not line up exactly falls through to the
+  unchanged `409 slot_taken`. This exists because the customer whose response was lost taps
+  the button again, and the slot they collide with is **their own**: saying "justo han cogido
+  esa hora" accuses a stranger who is really them, and they leave believing they have no
+  appointment while it sits in the agenda (#123, found on a real customer). For the same
+  reason the browser's `stillFree` pre-check **no longer aborts the booking** and may never
+  do so again — busy blocks carry no phone and no id, so it cannot know whose appointment is
+  in the way. It is the courtesy the entry above already required it to be; the server decides.
 - `slot_holds` keeps a chosen time for 5 minutes while the customer fills the form. It is
   the courtesy the entry above allows, never the guarantee: a lost or failed hold must
   still let the booking through. Its exclusion constraint carries the validity window
