@@ -9,6 +9,7 @@ import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { appointmentOut, waitlistOut, closeOut } from "./_lib/shape.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { armarCopia } from "./_lib/copia.js";
+import { restaurarCopia, CopiaInvalida } from "./_lib/restaurar.js";
 import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
 
 // Un día, o nada. Lo que llegue en la query lo escribe quien quiera: si no es
@@ -20,14 +21,44 @@ function pedirDia(valor) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
+  if (req.method !== "GET" && req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"]);
 
-  // Primero la puerta, antes de tocar la base de datos.
+  // Primero la puerta, antes de mirar el cuerpo y antes de tocar la base de
+  // datos. El POST exige el pase exactamente igual que el GET: es la misma
+  // puerta, y nada de lo que mande quien no se ha identificado se interpreta.
   const denied = requireAdmin(req);
   if (denied) return res.status(denied.status).json(denied.body);
 
   try {
     const supabase = getSupabase();
+
+    // Meter la copia de vuelta (#125). Es una RAMA de esta ruta y no una
+    // función nueva, por el mismo motivo que la copia: `api/` está en el techo
+    // de 12 del plan Hobby de Vercel. La ruta que ENTREGA la copia es la que la
+    // recibe de vuelta, y la llave del panel ya está comprobada aquí arriba.
+    //
+    // SÓLO AÑADE: no borra, no pisa y no actualiza ni una fila. Todo eso vive
+    // en _lib/restaurar.js, que es donde está explicado por qué.
+    if (req.method === "POST") {
+      let doc = req.body;
+      if (typeof doc === "string") {
+        try { doc = JSON.parse(doc); } catch { doc = null; }
+      }
+      try {
+        const informe = await restaurarCopia(supabase, doc);
+        // Recuentos, pero de una operación del panel: no se cachean tampoco.
+        res.setHeader("Cache-Control", "no-store, private");
+        return res.status(200).json({ ok: true, informe });
+      } catch (e) {
+        // Un archivo que no es una copia de esta web se rechaza entero, con un
+        // mensaje que se le puede enseñar tal cual, y SIN ESCRIBIR NI UNA FILA:
+        // la validación ocurre antes del primer INSERT.
+        if (e instanceof CopiaInvalida) {
+          return res.status(400).json({ ok: false, reason: "invalid_backup", message: e.message });
+        }
+        throw e;
+      }
+    }
 
     // La copia de seguridad entera. Es una RAMA de esta ruta y no una función
     // nueva: `api/` está en el techo de 12 del plan Hobby de Vercel. Sale por

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail } from "lucide-react";
+import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail, Upload } from "lucide-react";
 // El plazo de reserva sale de un único sitio, compartido con el servidor. La
 // página no puede ofrecer un día que `POST /api/appointments` vaya a rechazar.
 // `claveDeDia` es el "hoy" de la barbería, en su hora y no en la del móvil: es
@@ -12,6 +12,11 @@ import { DIAS_MAX_RESERVA, claveDeDia } from "../shared/plazo-reserva.js";
 // mismas: el número del aviso al móvil y lo que se ve en el panel tienen que
 // salir de la misma regla, o "hay 2 esperando" enseñaría a 3.
 import { corteDeMediodia, grupoDeEspera, esperaVigente } from "../shared/franja-horaria.js";
+// La marca y la versión de la copia, en el único sitio donde viven. El
+// navegador mira el archivo ANTES de mandarlo para poder decir "esto no es una
+// copia de tu web" sin gastar un viaje; el servidor lo vuelve a mirar, porque
+// esto de aquí es una comodidad y se puede saltar.
+import { motivoCopiaInvalida } from "../shared/formato-copia.js";
 
 const BARBER_WHATSAPP = "34610975733"; // +34 610 97 57 33, sin espacios ni símbolos
 const SHOP_ADDRESS = "Calle Cereros 22, 50003 Zaragoza, España";
@@ -890,6 +895,43 @@ export default function FelixBarberiaApp() {
     }
   }
 
+  // Meter la copia de vuelta (#125). La otra mitad de `descargarCopia`: sin
+  // esto, el archivo que Félix se baja es una llave de repuesto sin ninguna
+  // cerradura donde meterla.
+  //
+  // SÓLO AÑADE. El servidor no borra, no pisa y no actualiza ni una fila, así
+  // que esto se puede pulsar dos veces —o con el archivo equivocado— sin que
+  // pase nada. Por eso no lleva ningún aviso nuclear.
+  //
+  // Nunca se pinta una restauración como hecha si el servidor no la ha
+  // confirmado: lo que se enseña es el informe que él devuelve, y un fallo se
+  // cuenta tal cual.
+  async function restaurarCopia(documento) {
+    try {
+      const { informe } = await apiSend("/api/admin-data", "POST", documento, { auth: true });
+
+      // Lo que acaba de entrar tiene que verse, así que se relee el panel. Si
+      // ESA relectura falla, la restauración sigue estando hecha: se dice que
+      // no se ha podido refrescar, nunca que no se ha podido restaurar.
+      let refrescado = true;
+      try {
+        const r = await loadAdminData();
+        if (r === SESION_CADUCADA) refrescado = false;
+      } catch {
+        refrescado = false;
+      }
+      return { ...informe, refrescado };
+    } catch (e) {
+      // Sesión caducada o clave sin configurar: se vuelve a la pantalla de
+      // clave, igual que en el resto del panel.
+      if (e.status === 401 || e.status === 503) {
+        clearAdminSession();
+        setAdminEpoch((n) => n + 1);
+      }
+      throw e;
+    }
+  }
+
   // Crea una cita, o el grupo entero si son varias personas. Devuelve SIEMPRE
   // una lista con las citas creadas, o lanza un error con un mensaje que se
   // puede enseñar tal cual.
@@ -1218,7 +1260,7 @@ export default function FelixBarberiaApp() {
         {view === "privacidad" && <Privacidad />}
         {/* El panel ve lo suyo por su propia ruta, con la clave. Estas dos
             sustituyen a las públicas, que ya no llevan datos de nadie. */}
-        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} closes={closes} saveClose={saveClose} removeClose={removeClose} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} lastBackup={lastBackup} descargarCopia={descargarCopia} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
+        {view === "admin" && <AdminPanel key={adminEpoch} {...shared} appointments={adminAppointments} closes={closes} saveClose={saveClose} removeClose={removeClose} refreshAppointments={loadAdminData} loaded={loaded} avisoDestino={avisoDestino} loadCancelledFor={loadCancelledFor} lastBackup={lastBackup} descargarCopia={descargarCopia} restaurarCopia={restaurarCopia} onAvisoAplicado={() => { setAvisoDestino(null); limpiarUrlDelAviso(); }} />}
       </div>
 
       <BottomNav view={view} onInicio={() => goTo("inicio")} onMisCitas={() => goTo("misCitas")} onReservar={() => goReservar(null)} onContacto={() => goTo("contacto")} />
@@ -3172,7 +3214,7 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentCharged, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, onAvisoAplicado }) {
+function AdminPanel({ services, setServices, barbers, setBarbers, appointments, closes, saveClose, removeClose, holds, createAppointment, cancelAppointment, setAppointmentNoShow, setAppointmentCharged, refreshAppointments, blockedDays, setBlockedDays, festivos, setFestivos, vacationRanges, setVacationRanges, blockedRanges, setBlockedRanges, portfolio, setPortfolio, waitlist, markWaitlistNotified, removeWaitlistEntry, schedule, setSchedule, loaded, avisoDestino, loadCancelledFor, lastBackup, descargarCopia, restaurarCopia, onAvisoAplicado }) {
   // Si ya hay una sesión viva no se vuelve a pedir la clave. Caduca sola en
   // una hora, y el servidor la comprueba en cada escritura de todos modos:
   // esto solo decide qué pantalla se enseña.
@@ -4011,7 +4053,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
           {tab === "ajustes" && (
             <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <AvisosCard />
-              <CopiaCard lastBackup={lastBackup} sabido={datosFiables} descargarCopia={descargarCopia} />
+              <CopiaCard lastBackup={lastBackup} sabido={datosFiables} descargarCopia={descargarCopia} restaurarCopia={restaurarCopia} />
               <ScheduleEditor schedule={schedule} setSchedule={setSchedule} />
               {/* La lista de espera llega en la MISMA carga que las citas, así
                   que un fallo la deja vacía y la tarjeta desaparecería entera:
@@ -5048,7 +5090,38 @@ const DIAS_AVISO_COPIA = 7;
 // puede ser del mismo color que el resto de la pantalla.
 const AMBAR = "#E8A33D";
 
-// La copia de seguridad de Félix, y el recordatorio de hacerla.
+// Cómo se llama cada tabla cuando hay que contárselo a Félix. El informe del
+// servidor viene con los nombres de la base de datos, que no son para él.
+const NOMBRES_TABLA = {
+  services: "servicios",
+  barbers: "barberos",
+  schedule_ranges: "tramos de horario",
+  blocked_days: "días cerrados",
+  blocked_ranges: "horas bloqueadas",
+  festivos: "festivos",
+  vacation_ranges: "días de vacaciones",
+  daily_closes: "cierres de caja",
+  appointments: "citas",
+  waitlist: "apuntados a la lista de espera",
+};
+
+// Una línea del informe, en cristiano. Devuelve null si de esa tabla no ha
+// pasado nada: enseñar diez ceros esconde la línea que sí importa.
+function lineaDeTabla(tabla, c) {
+  const trozos = [];
+  if (c.metidas) trozos.push(`${c.metidas} ${NOMBRES_TABLA[tabla] || tabla} metidas`);
+  if (c.yaEstaban) trozos.push(`${c.yaEstaban} ya estaban`);
+  if (c.saltadas) trozos.push(`${c.saltadas} no cabían porque ya hay otra cita a esa hora`);
+  if (c.omitidas) trozos.push(`${c.omitidas} no entran por tener más de un año`);
+  if (!trozos.length) return null;
+  // Si no entró nada, la frase tiene que empezar por el nombre de la tabla
+  // igual: "3 citas ya estaban" se lee mal sin sujeto.
+  if (!c.metidas) return `${NOMBRES_TABLA[tabla] || tabla}: ${trozos.join(", ")}.`;
+  return `${trozos.join(", ")}.`;
+}
+
+// La copia de seguridad de Félix, el recordatorio de hacerla, y volver a
+// meterla.
 //
 // El recordatorio es la mitad que importa: una copia que se hizo una vez y
 // nunca más no protege de nada. Por eso la fecha se enseña siempre —también
@@ -5059,10 +5132,17 @@ const AMBAR = "#E8A33D";
 // misma carga que las citas, así que un fallo la borra de la pantalla — y "no
 // te has bajado ninguna" es lo peor que se le puede decir a alguien que sí la
 // tiene: apagaría el recordatorio justo cuando menos se sabe qué hay.
-function CopiaCard({ lastBackup, sabido = true, descargarCopia }) {
+function CopiaCard({ lastBackup, sabido = true, descargarCopia, restaurarCopia }) {
   const [ocupado, setOcupado] = useState(false);
   const [resumen, setResumen] = useState(null);
   const [error, setError] = useState(null);
+  // La restauración lleva su propio estado. Compartirlo con la descarga haría
+  // que bajarse una copia borrase de la pantalla el informe de la que se acaba
+  // de meter, que es justo lo que hay que poder releer con calma.
+  const [cargando, setCargando] = useState(false);
+  const [informe, setInforme] = useState(null);
+  const [errorCarga, setErrorCarga] = useState(null);
+  const ficheroRef = useRef(null);
 
   const dias = useMemo(() => {
     if (!sabido || !lastBackup) return null;
@@ -5101,6 +5181,58 @@ function CopiaCard({ lastBackup, sabido = true, descargarCopia }) {
       setOcupado(false);
     }
   }
+
+  // Lo que pasa cuando elige un archivo del móvil.
+  //
+  // Se mira aquí ANTES de mandar nada, para poder decirle "esto no es una copia
+  // de tu web" sin gastar un viaje. Lo de verdad lo decide el servidor, que
+  // vuelve a mirar exactamente lo mismo.
+  async function elegido(ev) {
+    const fichero = ev.target.files && ev.target.files[0];
+    // El input se vacía SIEMPRE, y lo primero: si no, elegir dos veces seguidas
+    // el mismo archivo no dispara nada porque el valor no ha cambiado.
+    ev.target.value = "";
+    if (!fichero) return;
+
+    setErrorCarga(null); setInforme(null);
+
+    let doc = null;
+    try {
+      doc = JSON.parse(await fichero.text());
+    } catch {
+      setErrorCarga("Ese archivo no se puede leer. Tiene que ser el .json que te bajas con el botón de arriba.");
+      return;
+    }
+
+    const motivo = motivoCopiaInvalida(doc);
+    if (motivo) { setErrorCarga(motivo); return; }
+
+    const citas = (doc.tables.appointments || []).length;
+    // Una confirmación, y una sola. Lo que dice es que NO se borra nada: ése es
+    // el hecho que quita el miedo, y el motivo de que aquí no haya ningún aviso
+    // rojo de los de "esto no tiene vuelta atrás".
+    const seguir = window.confirm(
+      `Voy a meter lo que falte de esta copia (${citas} citas dentro).\n\n` +
+      "No se borra ni se cambia nada de lo que ya tienes: lo que ya está se queda como está. " +
+      "Puedes pulsarlo las veces que quieras.\n\n¿Sigo?"
+    );
+    if (!seguir) return;
+
+    setCargando(true);
+    try {
+      setInforme(await restaurarCopia(doc));
+    } catch (e) {
+      // Nunca se pinta como hecha una restauración que el servidor no ha
+      // confirmado.
+      setErrorCarga(e.message || "No se ha podido cargar la copia.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const lineas = informe
+    ? Object.entries(informe.tablas || {}).map(([t, c]) => lineaDeTabla(t, c)).filter(Boolean)
+    : [];
 
   return (
     <div className="card" style={{ borderRadius: 12, padding: 14 }}>
@@ -5151,6 +5283,61 @@ function CopiaCard({ lastBackup, sabido = true, descargarCopia }) {
         Ojo: el archivo lleva los nombres y los teléfonos de tus clientes. Mándatelo por correo
         a ti mismo nada más bajarlo, para que no viva sólo en el móvil que puedes perder.
       </p>
+
+      {/* Volver a cargarla. La otra mitad: sin esto el archivo no sirve de nada
+          el día que haga falta. */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(201,162,39,0.18)" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: GOLD, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+          <Upload size={14} /> Volver a cargarla
+        </div>
+        <p style={{ fontSize: 12, color: SMOKE, margin: "0 0 10px" }}>
+          Mete de vuelta lo que falte de un archivo de copia. <strong style={{ color: BONE }}>No borra
+          ni cambia nada</strong> de lo que ya tienes: lo que ya está se queda como está, así que
+          puedes pulsarlo sin miedo aunque el archivo sea viejo.
+        </p>
+
+        <input
+          ref={ficheroRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={elegido}
+          style={{ display: "none" }}
+        />
+        <button
+          onClick={() => ficheroRef.current && ficheroRef.current.click()}
+          disabled={cargando}
+          className="ghost-btn"
+          style={{ width: "100%", padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: cargando ? "not-allowed" : "pointer" }}
+        >
+          {cargando ? "Metiendo la copia…" : "Cargar copia desde un archivo"}
+        </button>
+
+        {informe && (
+          <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(201,162,39,0.12)", fontSize: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {informe.totales && informe.totales.metidas
+                ? `Hecho: ${informe.totales.metidas} filas metidas.`
+                : "Hecho: no faltaba nada, no he metido ninguna fila."}
+            </div>
+            {lineas.length > 0 && (
+              <ul style={{ color: SMOKE, margin: "4px 0 0", paddingLeft: 16 }}>
+                {lineas.map((l, i) => <li key={i} style={{ marginBottom: 2 }}>{l}</li>)}
+              </ul>
+            )}
+            {informe.refrescado === false && (
+              <div style={{ color: AMBAR, marginTop: 6 }}>
+                La copia se ha metido, pero no he podido volver a cargar la pantalla. Sal y entra para verlo.
+              </div>
+            )}
+          </div>
+        )}
+
+        {errorCarga && (
+          <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(224,160,160,0.12)", color: "#e0a0a0", fontSize: 12 }}>
+            {errorCarga}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
