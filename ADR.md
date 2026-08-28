@@ -151,6 +151,21 @@ endorsement.
   ring his own phone while a customer's do. The panel therefore has to send the pass on
   **every** write, not only the ones that need permission — it went without it on cancel,
   and that alone was enough to make the app notify him of what he had just done himself.
+- **Work that reaches outside and doesn't change what the customer gets goes through
+  `waitUntil`, never in front of their response.** `tellShop` is called as
+  `waitUntil(tellShop(...))` with no `await` — which reads like a dropped promise and is
+  not: it is what stops a customer waiting on four round trips of Félix's push notice (the
+  service names, the subscriptions, the VAPID keys, and Google's servers) with their
+  appointment **already inserted**. Restoring the `await` restores the latency and nothing
+  says so. `waitUntil` is also not a longer way of dropping the promise: a Vercel function
+  can freeze the moment it answers, so bare fire-and-forget behind the `res` loses notices
+  intermittently and invisibly — the worse failure, because Félix would never learn which
+  bookings never rang. It is safe outside `tellShop`'s own `try/catch` because `waitUntil`
+  was checked not to throw when there is no request context. **The exception is
+  `api/push.js`, which awaits on purpose**: the panel's "test notification" button exists to
+  tell Félix whether the notice arrived, so there the waiting *is* the feature. Anything
+  added later that talks to a third party on a customer's request — email, SMS, a calendar
+  push — takes the same shape, and will arrive looking like "just one more `await`".
 - **Cancelled appointments are visible one day at a time and nowhere else.**
   `/api/admin-data?canceladas=<day>` serves them in their own array, only for that day, only
   behind the admin key. They never join `appointments`, so they stay out of the agenda, the
