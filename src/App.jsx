@@ -2168,12 +2168,16 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     // Pasa a ser lo que `ADR.md` manda que sea: una cortesía encima de la
     // garantía, nunca la garantía. Decide el servidor, que es el único que
     // sabe de quién es el hueco. Y si la cortesía falla, tampoco corta.
-    try {
-      await refreshAppointments();
-    } catch {
-      // Una disponibilidad que no se ha podido releer no es motivo para no
-      // mandar la reserva: la garantía está en la base de datos.
-    }
+    //
+    // Y POR ESO YA NO SE HACE AQUÍ. Si no corta la reserva, releer la agenda
+    // entera antes de mandarla es un `/api/bootstrap` completo por cada
+    // confirmación cuyo resultado no se mira. Tampoco protege a nadie: a quien
+    // va a por una hora que otro está rellenando lo para la RESERVA TEMPORAL
+    // de 5 minutos, mucho antes, al elegir la hora — nunca llega hasta aquí.
+    //
+    // Lo único que hacía de verdad era dejar la lista fresca para cuando se
+    // vuelve atrás tras un choque, así que es ahí abajo donde se hace ahora:
+    // en la rama de error, que es la rara.
 
     let appts;
     try {
@@ -2195,9 +2199,26 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
       if (e.reason === "slot_taken" || e.reason === "slot_held") {
         // slot_taken: la base de datos rechazó el solape, alguien llegó
         // primero. slot_held: otra persona está rellenando esa hora.
+        //
+        // El mensaje y el soltar la hora van PRIMERO, antes de releer: releer
+        // tarda medio segundo, y durante ese rato quien acaba de chocar se
+        // quedaría mirando la pantalla de confirmar sin saber que algo ha
+        // pasado. Lo que ya se sabe se cuenta ya.
         setBookingError(e.message);
         setSelectedTime(null);
         dropHold();
+        // Y AQUÍ SÍ se relee, porque se vuelve a la pantalla de elegir hora:
+        // sin esto, esa hora seguiría pintada como libre y quien acaba de
+        // llevarse el aviso la pincharía otra vez para el mismo mensaje. Es el
+        // único sitio donde esta relectura hacía algo, y ahora es el único
+        // donde se hace. Sigue sin cortar nada: si falla, se vuelve igual y
+        // como mucho la lista va un momento desfasada.
+        try {
+          await refreshAppointments();
+        } catch {
+          // Una disponibilidad que no se ha podido releer nunca es motivo para
+          // dejar a nadie atascado en una pantalla.
+        }
         setStep(dateStepNum);
       } else {
         setBookingError(e.message || "No se ha podido guardar la cita. Inténtalo otra vez.");
