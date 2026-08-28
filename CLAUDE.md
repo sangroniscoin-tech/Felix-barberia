@@ -150,6 +150,12 @@ Both confirmed by observation on 2026-08-02. An earlier merge produced no deploy
 because its build output was byte-identical to a preview Vercel had already built — it had
 nothing to publish, which is the expected behaviour, not a fault.
 
+**The functions run in Dublin (`dub1`), not in Vercel's default `iad1`** — `vercel.json`
+pins it, so that the code sits in the same AWS region as the Supabase project (`eu-west-1`).
+Confirm it with the middle segment of `x-vercel-id` on any `/api/*` response: `iad1::dub1`
+means the request entered at a US edge and the function ran in Dublin, which is correct.
+Move the database and the region moves with it. See `ADR.md`.
+
 **Preview deployments are behind Vercel's SSO**, so they cannot be curl'd from a session.
 Anything that needs verifying against a real deploy has to go to production — which is why
 server changes ship before the client is pointed at them.
