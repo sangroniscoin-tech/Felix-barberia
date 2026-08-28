@@ -16,10 +16,26 @@ import { haLlegadoAlTopeDeCitas, respuestaTope } from "./_lib/ritmo.js";
 import { bookingNotice, cancellationNotice } from "./_lib/notify.js";
 import { cuantosEsperanPor } from "./_lib/espera.js";
 import { sendPush } from "./_lib/push.js";
+import { waitUntil } from "@vercel/functions";
 
 // Hace sonar el móvil de Félix. Nunca lanza y nunca se le deja romper la
 // respuesta: si el aviso falla, la cita ya está guardada, que es lo único que
 // aquí no puede fallar.
+//
+// SE LLAMA POR `waitUntil`, NUNCA CON `await`. Dentro hay cuatro viajes —los
+// nombres de los servicios, las suscripciones, las claves VAPID y el envío a
+// los servidores de Google— y el cliente los estaba esperando todos antes de
+// ver su confirmación, con la cita ya guardada. No es trabajo suyo.
+//
+// `waitUntil` es lo que hace eso seguro y no un simple quitar el `await`: en
+// una función de Vercel, en cuanto se contesta, la función se puede congelar.
+// Soltar la promesa a secas detrás del `res` haría que el aviso a veces no
+// saliera, y fallaría de forma intermitente e invisible — que es peor avería
+// que la lentitud que arregla. `waitUntil` contesta ya Y mantiene viva la
+// función hasta que el envío termina.
+//
+// El botón de "probar aviso" del panel (`api/push.js`) SÍ espera, y debe
+// seguir esperando: su única razón de existir es decirle a Félix si llegó.
 //
 // Aquí había también un aviso por correo contra un Apps Script. Nunca llegó a
 // mandar nada, y esperar su respuesta costaba entre 1,6 y 10 segundos —medido—
@@ -360,7 +376,7 @@ export default async function handler(req, res) {
       }
 
       const out = (data || []).map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
-      await tellShop(supabase, out, "booked", req);
+      waitUntil(tellShop(supabase, out, "booked", req));
       // `appointment` en singular sigue siendo la primera: es lo que espera
       // todo lo que ya llamaba a esta ruta antes de que existieran los grupos.
       return res.status(201).json({ ok: true, appointment: out[0], appointments: out });
@@ -392,7 +408,7 @@ export default async function handler(req, res) {
           return res.status(404).json({ ok: false, reason: "not_found", message: "Esa reserva ya no existe." });
         }
         const cancelled = data.map(appointmentOut);
-        await tellShop(supabase, cancelled, "cancelled", req);
+        waitUntil(tellShop(supabase, cancelled, "cancelled", req));
         return res.status(200).json({ ok: true, appointments: cancelled });
       } catch (e) {
         return fail(res, e);
@@ -429,7 +445,7 @@ export default async function handler(req, res) {
       // Sólo una cancelación se avisa. Este mismo PATCH sirve para marcar
       // "no se presentó" y para quitar esa marca, y de eso no hay nada que
       // contar por correo: lo acaba de hacer Félix mirando la pantalla.
-      if (status === "cancelled") await tellShop(supabase, [appt], "cancelled", req);
+      if (status === "cancelled") waitUntil(tellShop(supabase, [appt], "cancelled", req));
       return res.status(200).json({ ok: true, appointment: appt });
     } catch (e) {
       return fail(res, e);
