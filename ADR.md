@@ -274,6 +274,18 @@ endorsement.
   backup export is the precedent: it is a branch of the panel's own data route
   (`?copia=1`), not a route of its own, and its shared code lives under `_lib/`, which
   Vercel does not count. That is the shape any new capability has to take from here.
+- **The functions run in `dub1` because the database is in `eu-west-1`, and those two move
+  together or not at all.** `vercel.json` pins the region; before it existed everything ran
+  in Vercel's default `iad1` while Postgres sat in Ireland, so **every single query crossed
+  the Atlantic** — measured at ~140 ms each against the 2-3 ms of same-region, and creating
+  one appointment makes about ten of them in sequence. The cost is per *query*, not per
+  request, so it hides from any endpoint that only does one and then bites hardest exactly
+  where the work is heaviest. Two consequences bind: moving the Supabase project to another
+  region means moving `regions` with it, and `vercel.json` stays **minimal** — it holds the
+  region and nothing else, because a `vercel.json` that starts declaring `buildCommand`,
+  `outputDirectory` or `routes` switches off what Vercel's Vite detection was inferring on
+  its own. One region, no `functionFailoverRegions`: several at once is a Pro feature and
+  this project is Hobby.
 - **The backup is a full server-side dump, and it pages.** It reads every business table
   directly — including the cancelled appointments the panel never receives — so it cannot
   be rebuilt from whatever the browser happened to have loaded. It fetches in 1000-row
