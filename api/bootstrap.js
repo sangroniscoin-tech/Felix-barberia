@@ -16,6 +16,7 @@ import {
   scheduleOut, blockedRangeOut, vacationOut, holdOut,
 } from "./_lib/shape.js";
 import { purgeExpiredHolds } from "./_lib/holds.js";
+import { claveDeDia } from "../shared/plazo-reserva.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
@@ -34,9 +35,35 @@ export default async function handler(req, res) {
         // Solo las columnas que hacen falta para ocupar un hueco. Ni siquiera
         // se piden el nombre y el teléfono: lo que no se lee no se puede
         // filtrar mal más abajo.
+        // DE HOY EN ADELANTE, y "hoy" leído en la hora de la barbería. Antes
+        // salían todas las que existen: 207 filas de las que 180 ya habían
+        // pasado, en la petición que hace TODO EL MUNDO al abrir la web. No
+        // servían para nada —`motivoFueraDePlazo` no deja reservar un día que
+        // ya pasó— y la lista sólo crecía: cada cita atendida se quedaba ahí
+        // para siempre, así que esto empeoraba solo sin que nadie tocase nada.
+        //
+        // `claveDeDia()` y no una fecha en UTC, y el motivo NO es que UTC se
+        // comiera citas: el servidor va por detrás de Zaragoza, así que un
+        // "hoy" en UTC se pasaría de generoso —de madrugada dejaría entrar el
+        // día de ayer— y eso no rompe nada. El motivo es que ESTA ventana y la
+        // que decide `motivoFueraDePlazo` tienen que ser LA MISMA: allí "ayer"
+        // se rechaza con "Ese día ya ha pasado", medido en la hora de la
+        // barbería. Sirviendo con otro reloj, la web podría pintar como libre
+        // un hueco de un día que el servidor va a rechazar. Por eso se lee del
+        // mismo fichero que ya leen las dos puertas, y no se inventa aquí.
+        //
+        // El día de hoy entra ENTERO, no desde la hora que sea: si son las
+        // 15:00, la cita de las 10:00 sigue haciendo falta para pintar bien el
+        // día. Y no se corta por arriba: hoy no ahorraría nada y sería una
+        // regla más que se rompe sola si el plazo cambia.
+        //
+        // Esto NO borra nada. El panel sigue viendo las citas pasadas por
+        // `/api/admin-data`, que no lleva filtro de fecha: el dinero, los
+        // recuentos y la búsqueda por nombre dependen de ellas.
         supabase.from("appointments")
           .select("appointment_date, start_time, barber_id, service_id, duration_minutes")
-          .eq("is_sample_data", false).neq("status", "cancelled"),
+          .eq("is_sample_data", false).neq("status", "cancelled")
+          .gte("appointment_date", claveDeDia()),
         supabase.from("schedule_ranges").select("*"),
         supabase.from("blocked_days").select("block_date"),
         supabase.from("blocked_ranges").select("*"),
