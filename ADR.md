@@ -61,6 +61,17 @@ endorsement.
   still let the booking through. Its exclusion constraint carries the validity window
   inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
   cannot go in an index predicate. Expired rows are swept with normal use; no cron.
+  **The hold is taken when the hour is CHOSEN, not when the booking is confirmed**, and
+  that is what makes it work: a second customer going for the same hour is stopped on the
+  time-picker with "Alguien está reservando esa hora ahora mismo", and never reaches the
+  form at all. Read without that, this entry is compatible with "the clash happens at
+  confirm time" — the wrong model, and one an agent has already reasoned from in #139. The
+  **5 minutes are an agreement with the client**, like the 30 days of `DIAS_MAX_RESERVA`,
+  not a technical default: a number that looks technical gets changed for technical
+  convenience. Three cases still clash despite it, and they are why the booking flow keeps
+  a `slot_taken`/`slot_held` error path at all: a hold that expired because the customer
+  took longer than five minutes, two people picking in the same instant before either holds
+  it, and anyone calling the API around the browser.
 - **Nothing a customer sees comes from the code.** State starts empty and a `loaded` flag
   says whether `/api/bootstrap` has answered; empty means *not known yet*, never *none*.
   So "no quedan huecos" and "sin citas" cannot render before `loaded`, the booking screen
