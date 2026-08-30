@@ -38,7 +38,7 @@ const RESPONSABLE_DOMICILIO = "Calle Cereros 22, 50003 Zaragoza";
 // de por dónde viajan los datos: a Google no sale nada de esta web.
 const RESPONSABLE_EMAIL = "felixbarberiazgz@gmail.com";
 // Se cambia a mano cuando se cambie el texto del aviso.
-const PRIVACIDAD_ACTUALIZADO = "12 de agosto de 2026";
+const PRIVACIDAD_ACTUALIZADO = "30 de agosto de 2026";
 // Cuánto se guardan los datos de una cita ya pasada.
 const PRIVACIDAD_CONSERVACION = "un año";
 
@@ -1692,7 +1692,9 @@ function Privacidad({ embedded = false }) {
         </p>
         <p style={{ margin: "0 0 8px" }}>
           Si te apuntaste a la <strong style={{ color: BONE }}>lista de espera</strong> y no llegaste a
-          reservar, ese apunte se borra entero al año de apuntarte. De ése no queda nada.
+          reservar, ese apunte <strong style={{ color: BONE }}>se borra entero solo</strong>: si pediste un
+          día concreto, en cuanto ese día pasa; y si dijiste que te valía cualquier día, al año de
+          apuntarte. De ése no queda nada.
         </p>
         <p style={{ margin: 0 }}>
           Si quieres que lo borremos antes, dínoslo y lo hacemos.
