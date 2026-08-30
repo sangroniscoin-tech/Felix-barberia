@@ -175,9 +175,21 @@ Move the database and the region moves with it. See `ADR.md`.
 Anything that needs verifying against a real deploy has to go to production — which is why
 server changes ship before the client is pointed at them.
 
-The only Action is `.github/workflows/ci.yml` — `npm install` then `npm run build`, on
-every PR and every push to `main`. It is `/next`'s gate: an agent saying "it builds" is a
-promise, a green check is a fact. It needs no secrets.
+There are **two** Actions, and neither needs a secret.
+
+`.github/workflows/ci.yml` — `npm install` then `npm run build`, on every PR and every push
+to `main`. It is `/next`'s gate: an agent saying "it builds" is a promise, a green check is
+a fact.
+
+`.github/workflows/vigilancia.yml` — **the only alarm this project has.** It checks every ten
+minutes that the site is still taking bookings and goes red, which is what emails the
+repository's owner. **Don't delete it as leftover and don't "fix" its hourly cron by raising
+the frequency** — GitHub delays scheduled events by hours, which is why the ten-minute loop
+lives *inside* a run and the cron only re-arms it. The file itself carries the full
+reasoning, including why the alarm cannot ride on Web Push (the server signs those with keys
+that live in Supabase, so the outage to report is the one that prevents reporting it), that
+it is free only because this repository is **public**, and that GitHub disables scheduled
+workflows after 60 days of inactivity — silently, which is when it is needed most.
 
 **CI proves the app compiles. It does not prove the app works.** There are no tests, no
 linter and no formatter in this project — see `ADR.md`.
