@@ -85,6 +85,14 @@ acceptance criteria on every change from here on:
   da igual—, si le vale cualquier día y una nota corta. Nada es obligatorio, y los que se
   apuntaron antes de que existiera la pregunta salen como «no lo dijo», que no es lo mismo
   que «me da igual». La raya entre mañana y tarde es el cierre de mediodía de su horario.
+  **Quien pidió un día concreto se borra solo en cuanto ese día pasa** (#145): a Félix le
+  salían esperando gente de días que ya no existían, y la lista que abre tiene que ser la de
+  gente a la que puede llamar. Quien dijo «cualquier día» o no dijo ninguno no caduca por
+  ahí —no pedía día— y sigue yéndose al año, como dice el aviso de privacidad.
+  **Quien pidió un día concreto se borra solo en cuanto ese día pasa** (#145): a Félix le
+  salían esperando gente de días que ya no existían, y la lista que abre tiene que ser la de
+  gente a la que puede llamar. Quien dijo «cualquier día» o no dijo ninguno no caduca por
+  ahí —no pedía día— y sigue yéndose al año, como dice el aviso de privacidad.
 - **Cuando se cancela una cita, la lista de espera se le pone delante.** El aviso del móvil
   dice a cuántos puede llamar y lleva al panel, a ese día: primero los que encajan por día
   y franja, luego los que dan igual, y abajo, marcados, los que no encajan — se ordena, no

@@ -117,7 +117,15 @@ endorsement.
   **public by legal obligation**, not a credential that leaked into `src/`. Leave it there.
 - **A `pg_cron` job erases personal data a year after the appointment** — name, phone,
   email and the `raw_*` columns — keeping the row so the takings survive; waitlist entries
-  go entirely. It runs in Postgres, not on a request, because a retention deadline cannot
+  go entirely. **A waitlist entry that named a day also goes as soon as that day is past**,
+  without waiting for the year: the sweep's predicate is `esperaVigente` from `shared/`
+  restated in SQL, `any_date` included, so the two must change together or the panel and the
+  database will disagree about who is still waiting. Its 03:15 UTC slot is load-bearing —
+  at 05:15 Madrid the UTC date and the shop's agree, which `current_date` depends on. **A waitlist entry that named a day also goes as soon as that day is past**,
+  without waiting for the year: the sweep's predicate is `esperaVigente` from `shared/`
+  restated in SQL, `any_date` included, so the two must change together or the panel and the
+  database will disagree about who is still waiting. Its 03:15 UTC slot is load-bearing —
+  at 05:15 Madrid the UTC date and the shop's agree, which `current_date` depends on. It runs in Postgres, not on a request, because a retention deadline cannot
   depend on traffic. It is the only thing here that runs unasked. The published notice
   describes it, so **the code and that page move together**: changing what the sweep keeps
   is editing a legal document. `NOT NULL` on name and phone stands — erased rows hold `''`,
