@@ -1,0 +1,166 @@
+# ¿Le sigue sonando el móvil a Félix?
+#
+# `/api/health` devuelve `avisos`, que es cuántos móviles están apuntados a los
+# avisos de reserva. Hoy vale 1: el suyo. Un cero ahí es la avería que NO se ve
+# por ningún otro sitio:
+#
+#   · la web sigue abriendo,
+#   · el servidor sigue llegando a la base de datos,
+#   · los clientes siguen reservando y sus citas se siguen guardando bien,
+#   · y a Félix no le suena el móvil.
+#
+# Todo verde y él enterándose de que tenía gente cuando abre el panel — o
+# cuando alguien se planta en la puerta a una hora que no sabía. Y llega solo:
+# cambia de móvil, reinstala, limpia los datos del navegador, o el navegador
+# caduca la suscripción por su cuenta. No hace falta que nadie se equivoque.
+#
+# ── POR QUÉ UN FICHERO APARTE Y NO UN PASO DENTRO DE vigilancia.yml ─────────
+#
+# Por dos razones, y la segunda es la que lo decide:
+#
+# 1. Cada rojo tiene que significar UNA cosa. Es el mismo motivo por el que
+#    `vigilancia.yml` no vive dentro de `ci.yml`: mezclados, un rojo ya no dice
+#    qué ha pasado. "La web no coge citas" y "la web coge citas pero nadie se
+#    entera" son averías distintas y se arreglan distinto.
+#
+# 2. **El correo no llegaría.** GitHub avisa cuando TERMINA el run, y el run de
+#    `vigilancia.yml` dura unas cinco horas — y encima lo cancela su propio
+#    rearme horario. Un fallo detectado en su minuto 0 esperaría horas al
+#    correo, o se lo tragaría la cancelación, porque GitHub no manda correo de
+#    los runs cancelados. Un fichero aparte hace runs de segundos que terminan
+#    de verdad, así que el correo sale al momento.
+#
+# ── POR QUÉ A CADA HORA Y NO CADA DIEZ MINUTOS ─────────────────────────────
+#
+# Porque un cero aquí NO para las reservas. Se siguen guardando todas; lo que
+# falla es el aviso. Puede esperar. `vigilancia.yml` se trae el reloj dentro
+# precisamente porque una web caída no puede esperar, y por eso allí hace falta
+# ese lío; aquí no. GitHub retrasa los eventos programados horas cuando tiene
+# carga — está documentado en `vigilancia.yml` y aquí se acepta a sabiendas:
+# enterarse de esto en una o en tres horas da igual.
+#
+# ── POR QUÉ CERO Y NO "HA BAJADO DE DOS A UNO" ─────────────────────────────
+#
+# Félix tiene un móvil. Vigilar una BAJADA obligaría a guardar en algún sitio
+# cuántos se esperan, y eso es un número más que mantener y otro sitio donde
+# equivocarse; además, si algún día apunta dos y uno se queda mudo, el otro le
+# sigue sonando — molesto, pero no es quedarse sin avisos. La avería de verdad
+# es el cero. Si algún día tiene dos móviles de forma estable, esto se revisa a
+# propósito y no de refilón.
+#
+# No necesita ningún secreto: `/api/health` es público y no devuelve ni un dato
+# de nadie, sólo un `ok`, la versión del esquema y ese recuento.
+
+name: Avisos
+
+on:
+  schedule:
+    # A cada hora. No hay conversión de zona horaria que revisar en marzo ni en
+    # octubre, porque "a cada hora" no depende del huso.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+# Grupo PROPIO, distinto del de `vigilancia.yml`: si compartieran grupo, cada
+# uno cancelaría al otro y se apagarían entre ellos.
+concurrency:
+  group: avisos
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  avisos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # Sin checkout, sin Node y sin npm: es un `curl` contra producción y no
+      # necesita una línea del repositorio. Un run que no descarga nada no puede
+      # ponerse rojo por una razón distinta de la que vigila.
+      - name: Comprobar que hay algún móvil apuntado a los avisos
+        env:
+          SITIO: https://felix-barberia.vercel.app
+        run: |
+          set -uo pipefail
+
+          SALUD="$(curl -sS --max-time 20 "$SITIO/api/health" 2>&1)"
+
+          # Si lo que falla es la web entera, ESTO NO ES LO SUYO y se calla.
+          # `vigilancia.yml` ya está mirando eso y ya manda su correo; dos rojos
+          # por la misma avería es ruido, y el ruido es como mueren las alarmas.
+          # Se sale en VERDE a propósito: no es que esté todo bien, es que la
+          # pregunta que hace este fichero no se puede contestar ahora mismo.
+          case "$SALUD" in
+            *'"ok":true'*)
+              : ;;
+            *)
+              {
+                echo "## 🟡 Hoy no se puede saber"
+                echo
+                echo "\`/api/health\` no ha contestado lo que debía, así que no hay número que"
+                echo "mirar. **Eso no lo cuenta este fichero**: lo cuenta la Vigilancia, que"
+                echo "está mirando lo mismo cada diez minutos y manda su propio correo."
+                echo
+                echo "Lo que contestó:"
+                echo
+                echo '```'
+                echo "$SALUD"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "Salud no concluyente; esto no es cosa de este workflow."
+              exit 0 ;;
+          esac
+
+          # El recuento. Se saca con `grep` y no con `jq` para no depender de
+          # nada instalado en el runner.
+          AVISOS="$(echo "$SALUD" | grep -o '"avisos":[0-9]*' | head -1 | cut -d: -f2)"
+
+          # Sin campo `avisos` no se inventa un cero: eso sería avisar de una
+          # avería porque la respuesta cambió de forma. Se dice y se sale verde.
+          if [ -z "${AVISOS:-}" ]; then
+            {
+              echo "## 🟡 La respuesta no trae el recuento"
+              echo
+              echo "\`/api/health\` contestó \`ok\` pero sin campo \`avisos\`. Puede que la ruta"
+              echo "haya cambiado de forma. **No se cuenta como avería**: no se sabe."
+              echo
+              echo '```'
+              echo "$SALUD"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Sin campo avisos en la respuesta."
+            exit 0
+          fi
+
+          if [ "$AVISOS" -gt 0 ]; then
+            {
+              echo "## ✅ Los avisos siguen llegando"
+              echo
+              echo "Móviles apuntados: **$AVISOS**."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "avisos=$AVISOS — correcto."
+            exit 0
+          fi
+
+          # ── Cero ────────────────────────────────────────────────────────────
+          {
+            echo "## 🔴 Tu web funciona, pero tu móvil ya no recibe los avisos"
+            echo
+            echo "**No hay ningún móvil apuntado.** Tus clientes pueden seguir reservando y"
+            echo "sus citas se están guardando bien — esto no ha perdido ni una. Lo que pasa"
+            echo "es que **ya no te suena el móvil cuando alguien reserva o anula**, así que"
+            echo "te enterarías al abrir el panel."
+            echo
+            echo "### Qué hacer"
+            echo
+            echo "Entra al panel desde tu móvil y dale otra vez al botón **«Activar»** de los"
+            echo "avisos. Con eso vuelve a quedar apuntado y este correo deja de llegar."
+            echo
+            echo "Suele pasar por algo de esto, y ninguna es culpa de nadie: móvil nuevo, la"
+            echo "app reinstalada, los datos del navegador borrados, o el propio navegador que"
+            echo "caduca el permiso por su cuenta pasado un tiempo."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::No hay ningún móvil apuntado a los avisos. La web funciona, pero Félix no se entera de las reservas."
+          exit 1

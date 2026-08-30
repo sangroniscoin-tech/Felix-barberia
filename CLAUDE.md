@@ -184,7 +184,7 @@ Move the database and the region moves with it. See `ADR.md`.
 Anything that needs verifying against a real deploy has to go to production — which is why
 server changes ship before the client is pointed at them.
 
-There are **two** Actions, and neither needs a secret.
+There are **three** Actions, and none needs a secret.
 
 `.github/workflows/ci.yml` — `npm install` then `npm run build`, on every PR and every push
 to `main`. It is `/next`'s gate: an agent saying "it builds" is a promise, a green check is
@@ -199,6 +199,15 @@ reasoning, including why the alarm cannot ride on Web Push (the server signs tho
 that live in Supabase, so the outage to report is the one that prevents reporting it), that
 it is free only because this repository is **public**, and that GitHub disables scheduled
 workflows after 60 days of inactivity — silently, which is when it is needed most.
+
+`.github/workflows/avisos.yml` — **watches the one breakage nothing else can see**: `avisos`
+falling to zero, meaning the site is fine, bookings are still being saved, and Félix's phone
+has stopped ringing. It is its own file rather than a step in `vigilancia.yml` for a reason
+that file explains at length: GitHub emails when a *run* ends, and vigilancia's run lasts
+five hours and is cancelled by its own re-arm, so a failure raised inside it would wait hours
+or be swallowed. Hourly is deliberate — a zero costs no bookings, so it can wait — and when
+`/api/health` is not answering it exits **green**, because that outage is vigilancia's to
+report and two reds for one fault is how alarms stop being read.
 
 **CI proves the app compiles. It does not prove the app works.** There are no tests, no
 linter and no formatter in this project — see `ADR.md`.
