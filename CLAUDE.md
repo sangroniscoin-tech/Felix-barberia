@@ -42,16 +42,25 @@ green check, a merge, and a verified production. A question is just answered.
 
 **One issue solves one problem.** If you can't title it without "and", it's two issues.
 
-**Don't ask the client to authorise each step.** Said by him on 2026-08-11, in his words:
-*"no me preguntes tanto para darte autorización de cosas, tú hazlo"*. Interviewing him about
-**what** to build is the job and does not change; asking permission to merge and deploy work
-he already asked for is not, and it was wearing him down. Build it, ship it, verify it, tell
-him what changed. Four things still come back to him, and none of them is a formality:
-anything that **deletes or rewrites data that already exists**, anything that **costs money
-or opens an account**, anything that **changes what his customers see** in a way he hasn't
-asked for — and **mandate zero, which outranks his instruction and mine**: a production
-that is already broken stops everything, and nothing is reverted, rolled back or redeployed
-on an agent's judgement. He authorised shipping, not deciding alone how to undo an outage.
+**Don't ask the client to authorise anything.** He has now said it twice, which is the
+point: on 2026-08-11, *"no me preguntes tanto para darte autorización de cosas, tú hazlo"*,
+and on 2026-08-30, broadening it — *"te doy mis consentimiento y el permiso para todo lo que
+quieras ejecutar, para que no me preguntes tanto"*. Having to repeat it three weeks later
+means what was written the first time was still too cautious. So: **no permission is asked
+to execute anything** — not to delete data, not for changes his customers will see, not for
+spending inside what he already pays for. Build it, ship it, verify it, and **tell him what
+changed afterwards**, in plain words.
+
+Interviewing him about **what** to build is the job, is not what wore him down, and does not
+change. Two things still do not happen without him, and neither of them is asking permission:
+
+- **Mandate zero**, which outranks his instruction and mine. A production that is *already*
+  broken stops everything, and nothing is reverted, rolled back or redeployed on an agent's
+  judgement. He set that rule himself, and a broad permission to act is not a permission to
+  act blind on something already down: he authorised shipping, not deciding alone how to undo
+  an outage.
+- **Opening accounts or taking on new services** — what starts costing real money or puts a
+  third party where there wasn't one. Not a formality: that decision is his and it has a bill.
 
 An issue's label is its stage, exactly one at a time: `suggested` → `ready-for-agent` →
 `implementing` → `in-review` → `deploying` → `shipped`, with `blocked` added alongside
