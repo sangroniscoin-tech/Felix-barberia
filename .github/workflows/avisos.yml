@@ -82,6 +82,16 @@ jobs:
         env:
           SITIO: https://felix-barberia.vercel.app
         run: |
+          # GitHub lanza esto con `bash -e {0}`, que tumba el paso en cuanto un
+          # comando devuelve error — y aquí eso sería lo contrario de lo que se
+          # quiere. Un `curl` que no conecta (la web caída) o un `grep` que no
+          # encuentra el campo tienen que salir VERDES, porque ninguna de esas
+          # dos cosas es lo que este fichero cuenta. Con `-e` puesto, salían
+          # ROJAS y Félix recibía dos correos por la misma avería.
+          #
+          # `set -uo pipefail` NO desactiva el `-e` de la línea de arriba: hay
+          # que apagarlo a mano. Aquí las comprobaciones se leen, no tumban.
+          set +e
           set -uo pipefail
 
           SALUD="$(curl -sS --max-time 20 "$SITIO/api/health" 2>&1)"
