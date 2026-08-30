@@ -108,9 +108,20 @@ Browser (React SPA)  ──fetch /api/*──►  Vercel Functions  ──servic
 The browser no longer calls Google at all: that leg was removed in #53.
 
 - `api/` — the server. `_lib/supabase.js` is the **only** place credentials are read; it
-  never enters the browser bundle. `bootstrap.js` (everything the app needs on load),
-  `appointments.js` (create/cancel), `admin.js` (config), `cobro.js` (how an appointment
-  was paid — admin pass required), `health.js` (mandate zero).
+  never enters the browser bundle. Twelve routes: `bootstrap.js` (everything the app needs
+  on load), `appointments.js` (create/cancel), `holds.js` (the 5-minute hold on a chosen
+  time), `my-appointments.js` (a phone's own bookings), `waitlist.js`, `push.js`,
+  `admin-session.js` (exchanges the pass for a session), `admin.js` (config),
+  `admin-data.js` (the panel's own read), `cierre.js` (the day's takings), `cobro.js` (how
+  an appointment was paid), `health.js` (mandate zero).
+- **`api/` is at twelve functions, which is exactly the Hobby plan's ceiling: a thirteenth
+  route does not deploy.** This is why shared server logic lives in `api/_lib/` — that
+  directory is bundled into the routes that import it and does not count against that ceiling.
+  New server behaviour extends an existing route or goes into `_lib/`; it does not get a
+  file of its own in `api/` without moving the plan.
+- `shared/` — the handful of rules the server and the browser must not disagree about
+  (`plazo-reserva.js`, `franja-horaria.js`, `formato-copia.js`). Imported by both sides, so
+  a change here lands in two places at once.
 - Every table has RLS **on with no policies** and no grants to `anon`/`authenticated`, so
   the publishable key grants nothing. All access goes through the server.
 - **Two appointments can no longer overlap**: an exclusion constraint on `appointments`
@@ -122,7 +133,7 @@ The browser no longer calls Google at all: that leg was removed in #53.
   (`1p-ew-zrLBYLLoxTS2VOf2O2_dqq1wUCGQ68epznJvn4`) is frozen as the migration's rollback
   and holds data as of 2026-08-02. Do not write to it, do not delete it.
 
-- `src/App.jsx` — **the entire client**, ~2000 lines: UI, booking rules, admin panel. No
+- `src/App.jsx` — **the entire client**, ~5,900 lines: UI, booking rules, admin panel. No
   router.
 - `src/main.jsx` — mounts it. That is the whole entrypoint.
 - `src/FelixBarberia.jsx` and `src/FelixBarberia.jsx (2).txt` — **dead copies** of an older
@@ -130,11 +141,15 @@ The browser no longer calls Google at all: that leg was removed in #53.
   of truth.
 - `apiGet` / `apiSend` in `src/App.jsx` are the only data access, and they only ever talk
   to same-origin `/api/*`. Unlike what they replaced, they do **not** swallow errors.
-- Tables: `appointments`, `services`, `barbers`, `schedule_ranges`, `blocked_days`,
-  `blocked_ranges`, `festivos`, `vacation_ranges`, `waitlist`, `app_meta`. One row per
-  thing — the old whole-JSON-blob model, and its last-write-wins data loss, is gone.
-- The gallery still reads four hotlinked photos from the code. Storing uploads needs file
-  storage, not a text column; it is a separate issue.
+- Tables (fourteen): `appointments`, `services`, `barbers`, `schedule_ranges`,
+  `blocked_days`, `blocked_ranges`, `festivos`, `vacation_ranges`, `waitlist`,
+  `slot_holds` (the 5-minute hold), `daily_closes` (the day's card and bizum totals),
+  `push_keys` (the VAPID pair), `push_subscriptions` (Félix's devices), `app_meta`. One row
+  per thing — the old whole-JSON-blob model, and its last-write-wins data loss, is gone.
+- **No image is hotlinked any more**: every photo the live app shows is served from
+  `public/`. The only Unsplash URLs left in the repository are inside the two dead
+  `FelixBarberia` copies, which nothing imports. Letting Félix upload his own photos still
+  needs file storage, not a text column; it is a separate issue.
 
 ## Deployment
 
@@ -212,7 +227,7 @@ deployment unreachable — `curl` to the site still works for checking state.
 | Google Apps Script | **nothing calls it any more** (#53). Still deployed, still unreachable by any connector | only if it is ever revived, which nothing needs |
 | WhatsApp | `https://wa.me/34610975733` links | the number is a constant in `src/App.jsx` |
 | Google Calendar | "add to calendar" links | none |
-| Unsplash | **the gallery's four hotlinked photos, and only those** — the service photos were downloaded into `public/servicios/` in #119 | none — if Unsplash changes them, the gallery changes. The gallery is now the last thing on this page that reaches a third party from the browser |
+| Unsplash | **nothing any more.** The service photos came into `public/servicios/` in #119 and the gallery's followed; the browser now fetches every image from this site | none |
 
 New services come in agent-reachable or not at all lightly: a Claude connector first, an
 MCP server or skill second, dashboard-only as a last resort that turns every future change
@@ -229,7 +244,7 @@ one that matters: the first only proves Vercel served a page.
 curl -fsS https://felix-barberia.vercel.app/ | grep -q "Félix Barbería" && echo "web OK"
 
 # 2. The server can reach the database — this is the check that can actually fail
-curl -fsS https://felix-barberia.vercel.app/api/health   # {"ok":true,"schema_version":"1"}
+curl -fsS https://felix-barberia.vercel.app/api/health   # {"ok":true,"schema_version":"1","avisos":1}
 
 # 3. Real data comes back through the API
 curl -fsS https://felix-barberia.vercel.app/api/bootstrap | grep -q "Corte de pelo" && echo "datos OK"
@@ -240,6 +255,11 @@ production — stop and report.
 
 `/api/health` separates **`not_configured`** (the Vercel environment variables are missing)
 from **`database_unreachable`** (Supabase isn't answering). Those need different fixes.
+
+**`avisos` is how many phones are subscribed to the push notices.** It is not an error
+count. A `0` there is its own quiet failure: the site would be green, bookings would still
+be saved, and nobody would be told a customer had booked — which is exactly the breakage
+that shows up nowhere else. One is the number to expect: Félix's phone.
 
 The app no longer silently falls back to sample data — a failed load shows a red banner
 telling customers not to book. But check the data anyway: a page that looks fine has never
