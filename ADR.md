@@ -68,7 +68,15 @@ endorsement.
   confirm time" — the wrong model, and one an agent has already reasoned from in #139. The
   **5 minutes are an agreement with the client**, like the 30 days of `DIAS_MAX_RESERVA`,
   not a technical default: a number that looks technical gets changed for technical
-  convenience. Three cases still clash despite it, and they are why the booking flow keeps
+  convenience. **A hold knows which browser it belongs to, and the courtesy #123 gave
+  appointments now covers it too**: `client_id` is an opaque random the browser generates —
+  never a person, never derived from one. `POST /api/holds` clears the caller's own live
+  holds before inserting, `conflictingHold` ignores them, and `bootstrap` marks them `mine`
+  so the picker stops hiding a customer's own hour from them. Without it, the hold whose
+  reply never reached a bad phone line blocked the very person who created it for five
+  minutes and blamed a stranger who was really him (#157). No `clientId` means exactly
+  today's behaviour, so anything calling the API from outside is untouched. Three cases
+  still clash despite it, and they are why the booking flow keeps
   a `slot_taken`/`slot_held` error path at all: a hold that expired because the customer
   took longer than five minutes, two people picking in the same instant before either holds
   it, and anyone calling the API around the browser.
