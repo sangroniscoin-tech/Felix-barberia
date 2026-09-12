@@ -1,12 +1,24 @@
 // Utilidades de las reservas temporales (slot_holds).
 //
-// Una reserva temporal guarda la hora elegida durante 5 minutos mientras el
+// Una reserva temporal guarda la hora elegida un rato —`HOLD_MINUTES`— mientras el
 // cliente rellena sus datos. NO es la garantía contra el doble booking: de eso
 // se sigue encargando la restricción appointments_no_overlap en Postgres. Esto
 // es una cortesía encima, y nunca puede sustituirla.
 
-// Cuánto dura una reserva temporal. Lo acordado con el cliente: 5 minutos.
-export const HOLD_MINUTES = 5;
+// Cuánto dura una reserva temporal. Lo acordado con el cliente: 7 minutos.
+//
+// Es un ACUERDO CON FÉLIX, no una conveniencia técnica, igual que los 30 días
+// de `DIAS_MAX_RESERVA`. Eran 5; el 12/09 él mismo pidió subirlo, después de ver
+// a un cliente quedarse sin tiempo una y otra vez, y lo dejó en 7 sabiendo lo
+// que cuesta: una hora que alguien empieza y abandona tarda ese mismo rato en
+// volver a estar libre, y su propio panel queda atado por las reservas de la
+// web (#160). Un número que parece técnico se cambia por comodidad técnica; éste
+// no se toca sin él.
+//
+// Vive AQUÍ y en ningún sitio más. Ningún comentario, ningún texto y ningún otro
+// fichero puede quedarse con una copia: una copia es lo que se queda atrás
+// cuando el acuerdo cambia.
+export const HOLD_MINUTES = 7;
 
 // ---------- Cuánto le queda a una reserva temporal ----------
 //
@@ -14,8 +26,8 @@ export const HOLD_MINUTES = 5;
 // único que sale hacia el navegador: nunca la hora absoluta de caducidad.
 //
 // El navegador no tiene forma de saber si su propio reloj está en hora, así que
-// comparar una marca del servidor contra `Date.now()` del móvil convierte
-// cinco minutos en tres, o en cero. A un cliente de Félix con el teléfono
+// comparar una marca del servidor contra `Date.now()` del móvil se come el
+// plazo entero: lo deja en tres minutos, o en cero. A un cliente de Félix con el teléfono
 // adelantado le caducaba la hora en el primer tick, antes de escribir nada, una
 // y otra vez (#159). Con una duración, el navegador sólo resta instantes de su
 // propio reloj, y eso es correcto aunque ese reloj esté mal puesto.
@@ -35,7 +47,7 @@ export function remainingMsOf(row, now = Date.now()) {
 // ellos (`ADR.md`: nada de lo público lleva a una persona). Sirve para una
 // sola cosa: que la reserva temporal HUÉRFANA de alguien —la que el servidor
 // llegó a crear, pero cuya respuesta nunca le llegó al móvil— no le bloquee a
-// él mismo durante cinco minutos (#157).
+// él mismo todo lo que dure la reserva (#157).
 //
 // Un valor raro se trata como AUSENTE, nunca como un error: quien no lo manda
 // se comporta exactamente como antes de que esto existiera, y uno mal formado

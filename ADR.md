@@ -56,7 +56,7 @@ endorsement.
   reason the browser's `stillFree` pre-check **no longer aborts the booking** and may never
   do so again — busy blocks carry no phone and no id, so it cannot know whose appointment is
   in the way. It is the courtesy the entry above already required it to be; the server decides.
-- `slot_holds` keeps a chosen time for 5 minutes while the customer fills the form. It is
+- `slot_holds` keeps a chosen time for 7 minutes while the customer fills the form. It is
   the courtesy the entry above allows, never the guarantee: a lost or failed hold must
   still let the booking through. Its exclusion constraint carries the validity window
   inside it — `tstzrange(created_at, expires_at)` — because `now()` is not immutable and
@@ -66,9 +66,11 @@ endorsement.
   time-picker with "Alguien está reservando esa hora ahora mismo", and never reaches the
   form at all. Read without that, this entry is compatible with "the clash happens at
   confirm time" — the wrong model, and one an agent has already reasoned from in #139. The
-  **5 minutes are an agreement with the client**, like the 30 days of `DIAS_MAX_RESERVA`,
-  not a technical default: a number that looks technical gets changed for technical
-  convenience. **A hold knows which browser it belongs to, and the courtesy #123 gave
+  **how long it lasts is an agreement with the client**, like the 30 days of
+  `DIAS_MAX_RESERVA`, not a technical default: a number that looks technical gets changed
+  for technical convenience. It was 5; Félix raised it to 7 himself on 2026-09-12, told
+  first what it costs — an abandoned hour takes that same while to come back, and his own
+  panel is bound by the web's holds (#160). `HOLD_MINUTES` is the only place it is written. **A hold knows which browser it belongs to, and the courtesy #123 gave
   appointments now covers it too**: `client_id` is an opaque random the browser generates —
   never a person, never derived from one. `POST /api/holds` clears the caller's own live
   holds before inserting, `conflictingHold` ignores them, and `bootstrap` marks them `mine`
@@ -85,7 +87,7 @@ endorsement.
   hide free hours or offer taken ones (#159). Three cases
   still clash despite it, and they are why the booking flow keeps
   a `slot_taken`/`slot_held` error path at all: a hold that expired because the customer
-  took longer than five minutes, two people picking in the same instant before either holds
+  took longer than the hold lasts, two people picking in the same instant before either holds
   it, and anyone calling the API around the browser.
 - **Nothing a customer sees comes from the code.** State starts empty and a `loaded` flag
   says whether `/api/bootstrap` has answered; empty means *not known yet*, never *none*.

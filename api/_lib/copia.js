@@ -28,8 +28,8 @@ import { FORMATO_COPIA, APP_COPIA } from "../../shared/formato-copia.js";
 // Lo que NO entra, y por qué:
 //  - `push_keys` y `push_subscriptions`: no son datos del negocio. Se vuelven a
 //    generar activando los avisos otra vez desde el móvil.
-//  - `slot_holds`: reservas temporales de cinco minutos. Caducan solas; copiar
-//    algo que muere en cinco minutos no reconstruye nada.
+//  - `slot_holds`: reservas temporales de unos minutos. Caducan solas; copiar
+//    algo que muere en unos minutos no reconstruye nada.
 //  - `app_meta`: la versión del esquema y la fecha de esta misma copia. Es
 //    contabilidad de la propia aplicación, no del negocio.
 const TABLAS = [

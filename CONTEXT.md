@@ -28,10 +28,10 @@ acceptance criteria on every change from here on:
   only times where the whole group fits are offered, and the whole reservation can be
   cancelled at once or one person taken out of it. Félix takes those by phone from his own
   panel, where the limit is 5 rather than 3: he knows what fits in his day.
-- Picking a time holds it for 5 minutes while the customer fills in their details, with a
+- Picking a time holds it for 7 minutes while the customer fills in their details, with a
   visible countdown. For everyone else that hour disappears, and comes back on its own if
   nobody confirms. Félix's panel is bound by the same holds — his own choice, made knowing
-  he may have to wait up to five minutes to write a booking in by hand.
+  he may have to wait up to seven minutes to write a booking in by hand.
 - Félix uses the same site's admin panel to see the day, add bookings by hand, block time
   off, set holidays and holidays-of-obligation, manage the waiting list and the photo
   gallery, and change opening hours. **Every closure he sets he can also take back** —
