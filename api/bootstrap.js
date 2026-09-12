@@ -34,6 +34,8 @@ export default async function handler(req, res) {
     // sale exactamente como salía.
     const clientId = sanitizeClientId(req.query && req.query.clientId);
 
+    const ahora = Date.now();
+
     const [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, holds] =
       await Promise.all([
         supabase.from("services").select("*").eq("active", true).order("sort_order"),
@@ -100,7 +102,12 @@ export default async function handler(req, res) {
       blockedRanges: blockedRanges.data.map(blockedRangeOut),
       festivos: festivos.data.map((r) => r.festivo_date),
       vacationRanges: vacations.data.map(vacationOut),
-      holds: holds.data.map((h) => holdOut(h, clientId)),
+      // Todas las reservas temporales de esta respuesta se miden contra el
+      // MISMO instante del reloj del servidor: lo que sale es cuánto le queda a
+      // cada una, no cuándo caduca. El navegador lo cuenta con su propio reloj
+      // desde que le llega la respuesta, y así un móvil mal puesto en hora deja
+      // de ver como libres horas que no lo están, o al revés (#159).
+      holds: holds.data.map((h) => holdOut(h, clientId, ahora)),
     });
   } catch (e) {
     return fail(res, e);

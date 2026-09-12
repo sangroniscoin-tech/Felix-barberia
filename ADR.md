@@ -75,7 +75,14 @@ endorsement.
   so the picker stops hiding a customer's own hour from them. Without it, the hold whose
   reply never reached a bad phone line blocked the very person who created it for five
   minutes and blamed a stranger who was really him (#157). No `clientId` means exactly
-  today's behaviour, so anything calling the API from outside is untouched. Three cases
+  today's behaviour, so anything calling the API from outside is untouched. **The browser
+  never compares a timestamp made by the server against its own clock.** `holds` and
+  `bootstrap` send how much time is LEFT, computed server-side; the browser turns it into a
+  deadline on its own clock the instant the reply lands — two readings of one clock are
+  right even when that clock is wrong. `expiresAt` left the payload, because while it was
+  there someone would subtract it from `Date.now()` again: that subtraction expired a fast
+  phone's hour on the first tick, so that customer could never book, and made `liveHoldsOn`
+  hide free hours or offer taken ones (#159). Three cases
   still clash despite it, and they are why the booking flow keeps
   a `slot_taken`/`slot_held` error path at all: a hold that expired because the customer
   took longer than five minutes, two people picking in the same instant before either holds
@@ -129,11 +136,8 @@ endorsement.
   without waiting for the year: the sweep's predicate is `esperaVigente` from `shared/`
   restated in SQL, `any_date` included, so the two must change together or the panel and the
   database will disagree about who is still waiting. Its 03:15 UTC slot is load-bearing —
-  at 05:15 Madrid the UTC date and the shop's agree, which `current_date` depends on. **A waitlist entry that named a day also goes as soon as that day is past**,
-  without waiting for the year: the sweep's predicate is `esperaVigente` from `shared/`
-  restated in SQL, `any_date` included, so the two must change together or the panel and the
-  database will disagree about who is still waiting. Its 03:15 UTC slot is load-bearing —
-  at 05:15 Madrid the UTC date and the shop's agree, which `current_date` depends on. It runs in Postgres, not on a request, because a retention deadline cannot
+  at 05:15 Madrid the UTC date and the shop's agree, which `current_date` depends on.
+  It runs in Postgres, not on a request, because a retention deadline cannot
   depend on traffic. It is the only thing here that runs unasked. The published notice
   describes it, so **the code and that page move together**: changing what the sweep keeps
   is editing a legal document. `NOT NULL` on name and phone stands — erased rows hold `''`,

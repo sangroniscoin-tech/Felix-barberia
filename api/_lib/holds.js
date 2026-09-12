@@ -8,6 +8,26 @@
 // Cuánto dura una reserva temporal. Lo acordado con el cliente: 5 minutos.
 export const HOLD_MINUTES = 5;
 
+// ---------- Cuánto le queda a una reserva temporal ----------
+//
+// El rato que falta, en milisegundos, medido con el reloj del SERVIDOR. Es lo
+// único que sale hacia el navegador: nunca la hora absoluta de caducidad.
+//
+// El navegador no tiene forma de saber si su propio reloj está en hora, así que
+// comparar una marca del servidor contra `Date.now()` del móvil convierte
+// cinco minutos en tres, o en cero. A un cliente de Félix con el teléfono
+// adelantado le caducaba la hora en el primer tick, antes de escribir nada, una
+// y otra vez (#159). Con una duración, el navegador sólo resta instantes de su
+// propio reloj, y eso es correcto aunque ese reloj esté mal puesto.
+//
+// Nunca sale negativo: una caducada vale 0, que es exactamente lo que el
+// navegador tiene que entender por "ya no vale".
+export function remainingMsOf(row, now = Date.now()) {
+  const end = new Date(row.expires_at).getTime();
+  if (!Number.isFinite(end)) return 0;
+  return Math.max(0, end - (now instanceof Date ? now.getTime() : now));
+}
+
 // ---------- De quién es una reserva temporal (client_id) ----------
 //
 // Un valor aleatorio y opaco que se genera el propio navegador. NO es una
