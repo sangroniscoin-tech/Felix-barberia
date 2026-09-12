@@ -450,6 +450,37 @@ function clientId() {
   return v;
 }
 
+// ---------- La cuenta atrás de una reserva temporal ----------
+//
+// El servidor manda CUÁNTO LE QUEDA a cada hora guardada (`remainingMs`), no
+// cuándo caduca. Aquí se convierte en un instante del reloj DE ESTE NAVEGADOR:
+// el momento en que llegó la respuesta más lo que quedaba. A partir de ahí todo
+// lo que se compara sale del mismo reloj, así que da exactamente igual que ese
+// reloj esté mal puesto.
+//
+// Eso es lo que arregla #159. Antes se restaba `expiresAt` del servidor menos
+// `Date.now()` del móvil: un teléfono adelantado dos minutos dejaba al cliente
+// con tres, y uno adelantado cinco le caducaba la hora en el primer tick, antes
+// de que le diera tiempo a escribir nada. Nunca volver a comparar una marca de
+// tiempo del servidor contra el reloj del navegador.
+//
+// La cuenta empieza CUANDO LLEGA LA RESPUESTA, no cuando se pidió: así el viaje
+// de ida y vuelta por la red se lo come el servidor y no el cliente, y lo que
+// se enseña nunca es más de lo que queda de verdad.
+//
+// Sin `remainingMs` —una respuesta vieja, o algo raro— vale 0, que es "ya no
+// vale": lo que se pierde es la comodidad, nunca la reserva.
+function conCaducidadLocal(hold, llegada = Date.now()) {
+  if (!hold) return hold;
+  const queda = Number(hold.remainingMs);
+  return { ...hold, caducaEn: llegada + (Number.isFinite(queda) ? Math.max(0, queda) : 0) };
+}
+
+function holdsConCaducidadLocal(holds) {
+  const llegada = Date.now();
+  return (holds || []).map((h) => conCaducidadLocal(h, llegada));
+}
+
 async function apiGet(path, { auth = false } = {}) {
   const headers = { Accept: "application/json" };
   if (auth) {
@@ -690,7 +721,7 @@ export default function FelixBarberiaApp() {
         setFestivosState(d.festivos);
         setVacationRangesState(d.vacationRanges);
         setScheduleState(d.schedule);
-        setHoldsState(d.holds || []);
+        setHoldsState(holdsConCaducidadLocal(d.holds));
         setLoadError(null);
         setLoaded(true);
       } catch (e) {
@@ -1059,7 +1090,9 @@ export default function FelixBarberiaApp() {
     // servidor que retire la reserva temporal que este mismo navegador tuviera
     // guardada, incluida la huérfana cuya respuesta nunca llegó (#157).
     const body = await apiSend("/api/holds", "POST", { ...data, clientId: clientId() });
-    return body.hold;
+    // La cuenta atrás arranca AQUÍ, con el reloj de este navegador, en cuanto
+    // la respuesta ha llegado de verdad (#159).
+    return conCaducidadLocal(body.hold);
   }
 
   // Suelta la hora en cuanto se sabe que ya no hace falta. Caducar es la red
@@ -1081,8 +1114,9 @@ export default function FelixBarberiaApp() {
   async function refreshAppointments() {
     const d = await apiGet(`/api/bootstrap?clientId=${encodeURIComponent(clientId())}`);
     setAppointmentsState(d.appointments);
-    setHoldsState(d.holds || []);
-    latestHoldsRef.current = d.holds || [];
+    const conReloj = holdsConCaducidadLocal(d.holds);
+    setHoldsState(conReloj);
+    latestHoldsRef.current = conReloj;
     return d.appointments;
   }
 
@@ -1639,9 +1673,13 @@ function Galeria({ portfolio, barbers }) {
 
 /* ===================== CLIENTE ===================== */
 
-// Las reservas temporales vivas de un barbero en un día. Se compara expiresAt
-// contra la hora de ahora, así que una caducada que aún viaje en los datos no
-// cuenta. Con ownHoldId se excluye la propia: quien reservó la hora sigue
+// Las reservas temporales vivas de un barbero en un día. Lo que se compara es
+// `caducaEn` —el instante que este mismo navegador calculó al recibir la
+// respuesta— contra su propio reloj, así que una caducada que aún viaje en los
+// datos no cuenta y un reloj mal puesto no cambia nada. Antes se miraba el
+// `expiresAt` del servidor contra `Date.now()`: un móvil atrasado enseñaba como
+// ocupadas horas ya libres, y uno adelantado como libres unas que no lo estaban
+// (#159). Con ownHoldId se excluye la propia: quien reservó la hora sigue
 // viéndola.
 //
 // Lo usan por igual la pantalla de reserva y el panel de Félix. Es el mismo
@@ -1851,7 +1889,7 @@ function liveHoldsOn(holds, k, barberId, ownHoldId = null) {
   const nowMs = Date.now();
   return (holds || []).filter(
     (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId && !h.mine &&
-      new Date(h.expiresAt).getTime() > nowMs
+      Number(h.caducaEn) > nowMs
   );
 }
 
@@ -2041,7 +2079,8 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   const [cancelled, setCancelled] = useState(false);
   const [bookingError, setBookingError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  // La reserva temporal de esta persona: { id, expiresAt }. Puede ser null si
+  // La reserva temporal de esta persona: { id, caducaEn, ... }, donde `caducaEn`
+  // es un instante del reloj de ESTE navegador, no del servidor. Puede ser null si
   // el servidor no consiguió guardarla, y entonces se reserva igual, sin
   // protección y sin que se entere nadie.
   const [hold, setHold] = useState(null);
@@ -2151,7 +2190,11 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   useEffect(() => {
     if (!hold || step !== dataStepNum) return undefined;
     function tick() {
-      const left = new Date(hold.expiresAt).getTime() - Date.now();
+      // Dos instantes del MISMO reloj: el que este navegador calculó al recibir
+      // la respuesta y el de ahora. Nunca una marca del servidor contra
+      // `Date.now()`, que es lo que dejaba sin reservar a quien llevaba el
+      // teléfono adelantado (#159).
+      const left = hold.caducaEn - Date.now();
       if (left > 0) { setHoldLeftMs(left); return; }
       holdSeqRef.current += 1;
       holdRef.current = null;

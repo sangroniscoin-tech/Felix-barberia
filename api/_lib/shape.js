@@ -1,6 +1,7 @@
 // Traduce entre las filas de Postgres y las formas que la app ya usa.
 // La app no cambia de vocabulario: sigue hablando de dateKey, time, service.
 // Todo el trabajo de adaptación vive aquí, en un solo sitio.
+import { remainingMsOf } from "./holds.js";
 
 export function serviceOut(r) {
   return { id: r.id, name: r.name, desc: r.description, duration: r.duration_minutes, price: Number(r.price) };
@@ -141,14 +142,24 @@ export function vacationOut(r) {
 
 // Una reserva temporal, tal y como la ve el navegador. No lleva —ni puede
 // llevar— nombre, teléfono ni correo: la tabla no los guarda.
-export function holdOut(r, viewerClientId = null) {
+//
+// Sale CUÁNTO LE QUEDA (`remainingMs`), nunca la hora absoluta en la que
+// caduca. La diferencia no es de estilo: una marca de tiempo del servidor sólo
+// sirve de algo si quien la recibe tiene el reloj en hora, y el del móvil de un
+// cliente no tiene por qué estarlo. Un teléfono adelantado cinco minutos daba
+// por caducada la hora nada más guardarla, en el primer tick, y dejaba a esa
+// persona sin poder reservar nunca (#159). Restar dos instantes del MISMO reloj
+// es correcto aunque ese reloj esté mal puesto, y eso es lo único que se le
+// pide ahora al navegador. Por eso `expiresAt` ya no viaja: mientras estuviera
+// en la respuesta, alguien acabaría comparándola otra vez con `Date.now()`.
+export function holdOut(r, viewerClientId = null, now = Date.now()) {
   return {
     id: r.id,
     barberId: r.barber_id,
     dateKey: r.hold_date,
     time: String(r.start_time).slice(0, 5),
     duration: r.duration_minutes,
-    expiresAt: r.expires_at,
+    remainingMs: remainingMsOf(r, now),
     // ¿Es de quien está preguntando? Sale un sí/no y NUNCA el client_id de
     // nadie: la respuesta pública no gana ningún identificador nuevo
     // (`ADR.md`: nada de lo público lleva a una persona). Sin él, la reserva
