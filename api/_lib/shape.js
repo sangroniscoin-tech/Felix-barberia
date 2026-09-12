@@ -141,7 +141,7 @@ export function vacationOut(r) {
 
 // Una reserva temporal, tal y como la ve el navegador. No lleva —ni puede
 // llevar— nombre, teléfono ni correo: la tabla no los guarda.
-export function holdOut(r) {
+export function holdOut(r, viewerClientId = null) {
   return {
     id: r.id,
     barberId: r.barber_id,
@@ -149,6 +149,12 @@ export function holdOut(r) {
     time: String(r.start_time).slice(0, 5),
     duration: r.duration_minutes,
     expiresAt: r.expires_at,
+    // ¿Es de quien está preguntando? Sale un sí/no y NUNCA el client_id de
+    // nadie: la respuesta pública no gana ningún identificador nuevo
+    // (`ADR.md`: nada de lo público lleva a una persona). Sin él, la reserva
+    // huérfana de un cliente le seguiría tapando su propia hora en la pantalla
+    // de elegir, y no podría ni volver a pincharla (#157).
+    mine: Boolean(viewerClientId && r.client_id && r.client_id === viewerClientId),
   };
 }
 
