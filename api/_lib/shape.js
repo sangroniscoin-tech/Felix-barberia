@@ -146,7 +146,8 @@ export function vacationOut(r) {
 // Sale CUÁNTO LE QUEDA (`remainingMs`), nunca la hora absoluta en la que
 // caduca. La diferencia no es de estilo: una marca de tiempo del servidor sólo
 // sirve de algo si quien la recibe tiene el reloj en hora, y el del móvil de un
-// cliente no tiene por qué estarlo. Un teléfono adelantado cinco minutos daba
+// cliente no tiene por qué estarlo. Un teléfono adelantado más de lo que dura la
+// reserva daba
 // por caducada la hora nada más guardarla, en el primer tick, y dejaba a esa
 // persona sin poder reservar nunca (#159). Restar dos instantes del MISMO reloj
 // es correcto aunque ese reloj esté mal puesto, y eso es lo único que se le

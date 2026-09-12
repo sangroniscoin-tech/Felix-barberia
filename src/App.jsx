@@ -2147,7 +2147,9 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     if (previous) releaseHold(previous.id);
   }
 
-  // Al pasar a la pantalla de datos se guarda la hora durante 5 minutos.
+  // Al pasar a la pantalla de datos se guarda la hora. Cuánto rato lo decide el
+  // servidor (`HOLD_MINUTES`), y aquí no se repite el número: el navegador sólo
+  // cuenta lo que le digan que le queda.
   async function goToDataStep() {
     dropHold();
     const seq = holdSeqRef.current;
@@ -2260,7 +2262,7 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
     // entera antes de mandarla es un `/api/bootstrap` completo por cada
     // confirmación cuyo resultado no se mira. Tampoco protege a nadie: a quien
     // va a por una hora que otro está rellenando lo para la RESERVA TEMPORAL
-    // de 5 minutos, mucho antes, al elegir la hora — nunca llega hasta aquí.
+    // mientras rellena, mucho antes, al elegir la hora — nunca llega hasta aquí.
     //
     // Lo único que hacía de verdad era dejar la lista fresca para cuando se
     // vuelve atrás tras un choque, así que es ahí abajo donde se hace ahora:

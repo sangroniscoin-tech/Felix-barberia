@@ -44,7 +44,7 @@ export const ORDEN_RESTAURACION = [
 
 // Lo que la copia NO trae, y que por tanto tampoco se toca aquí: `push_keys` y
 // `push_subscriptions` (se regeneran pulsando "Activar" en el móvil),
-// `slot_holds` (caducan solas en cinco minutos) y `app_meta` (contabilidad de
+// `slot_holds` (caducan solas en unos minutos) y `app_meta` (contabilidad de
 // la propia aplicación). Y la fecha de la última copia NO se mueve al
 // restaurar: restaurar no es hacer una copia. Si un documento manipulado trae
 // una tabla de más, se ignora — sólo se recorre la lista de arriba.
