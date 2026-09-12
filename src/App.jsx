@@ -414,6 +414,42 @@ function clearAdminSession() {
   try { window.sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch { /* nada que limpiar */ }
 }
 
+// ---------- Quién es este navegador ----------
+//
+// Un valor aleatorio, opaco y anónimo que este navegador se genera una vez y
+// guarda. NO es una persona y nunca puede serlo: no sale del nombre, ni del
+// teléfono, ni de nada del cliente, y no se usa para nada más que para esto:
+// que la reserva temporal que el servidor guardó, y cuya respuesta nunca llegó
+// a este móvil, no le bloquee la hora a quien la pidió (#157).
+//
+// Si no hay dónde guardarlo (modo privado, almacenamiento bloqueado) se queda
+// en memoria y funciona igual mientras la pestaña esté abierta. Nunca puede
+// dar un error: es una comodidad, y una comodidad jamás impide reservar.
+const CLIENT_ID_KEY = "felixClientId";
+const CLIENT_ID_OK = /^[A-Za-z0-9_-]{8,64}$/;
+let clientIdEnMemoria = null;
+
+function nuevoClientId() {
+  try {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID().replace(/-/g, "");
+    }
+  } catch { /* se usa el de abajo */ }
+  return (Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2)).slice(0, 32);
+}
+
+function clientId() {
+  if (clientIdEnMemoria) return clientIdEnMemoria;
+  let v = null;
+  try { v = window.localStorage.getItem(CLIENT_ID_KEY); } catch { v = null; }
+  if (!v || !CLIENT_ID_OK.test(v)) {
+    v = nuevoClientId();
+    try { window.localStorage.setItem(CLIENT_ID_KEY, v); } catch { /* se queda solo en memoria */ }
+  }
+  clientIdEnMemoria = v;
+  return v;
+}
+
 async function apiGet(path, { auth = false } = {}) {
   const headers = { Accept: "application/json" };
   if (auth) {
@@ -644,7 +680,7 @@ export default function FelixBarberiaApp() {
     let mounted = true;
     (async () => {
       try {
-        const d = await apiGet("/api/bootstrap");
+        const d = await apiGet(`/api/bootstrap?clientId=${encodeURIComponent(clientId())}`);
         if (!mounted) return;
         setServicesState(d.services);
         setBarbersState(d.barbers);
@@ -1019,7 +1055,10 @@ export default function FelixBarberiaApp() {
   // comodidad, no una garantía: si falla, quien reserva no se entera y sigue
   // adelante. La garantía contra el solape sigue siendo la base de datos.
   async function createHold(data) {
-    const body = await apiSend("/api/holds", "POST", data);
+    // Va siempre con el identificador de este navegador: es lo que le dice al
+    // servidor que retire la reserva temporal que este mismo navegador tuviera
+    // guardada, incluida la huérfana cuya respuesta nunca llegó (#157).
+    const body = await apiSend("/api/holds", "POST", { ...data, clientId: clientId() });
     return body.hold;
   }
 
@@ -1040,7 +1079,7 @@ export default function FelixBarberiaApp() {
   // defensa contra dos reservas a la vez —de eso se encarga la base de datos—
   // pero evita enseñar como libre un hueco que acaban de ocupar.
   async function refreshAppointments() {
-    const d = await apiGet("/api/bootstrap");
+    const d = await apiGet(`/api/bootstrap?clientId=${encodeURIComponent(clientId())}`);
     setAppointmentsState(d.appointments);
     setHoldsState(d.holds || []);
     latestHoldsRef.current = d.holds || [];
@@ -1811,7 +1850,7 @@ function PrivacidadBloque({ titulo, children }) {
 function liveHoldsOn(holds, k, barberId, ownHoldId = null) {
   const nowMs = Date.now();
   return (holds || []).filter(
-    (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId &&
+    (h) => h.dateKey === k && h.barberId === barberId && h.id !== ownHoldId && !h.mine &&
       new Date(h.expiresAt).getTime() > nowMs
   );
 }
@@ -1836,8 +1875,11 @@ function computeAvailableSlots({ date, durationMin, barberId, appointments, bloc
   const blocks = schedule[dow] || [];
   const dayAppts = appointments.filter((a) => a.dateKey === k && a.barberId === barberId);
   const dayBlockedRanges = blockedRanges.filter((b) => b.dateKey === k);
-  // Las reservas temporales de otros ocultan la hora igual que una cita. La
-  // propia no: comparando por id, quien reservó la hora sigue viéndola.
+  // Las reservas temporales de otros ocultan la hora igual que una cita. Las
+  // propias no: por id la que se acaba de guardar, y por `mine` —que marca el
+  // servidor— cualquier otra de este mismo navegador, incluida la huérfana
+  // cuya respuesta nunca llegó. Sin eso, al cliente le desaparecía de la
+  // pantalla su propia hora y no podía ni volver a pincharla (#157).
   const dayHolds = liveHoldsOn(holds, k, barberId, ownHoldId);
   const now = new Date();
   const isToday = k === dateKey(now);
@@ -2195,6 +2237,10 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
         phone,
         email: email.trim() || null,
         holdId: currentHold ? currentHold.id : undefined,
+        // Y quién lo pide. Cuando la respuesta del hold no llegó no hay
+        // holdId que mandar, y esto es lo único que le dice al servidor que la
+        // hora que estorba es suya y no de un desconocido (#157).
+        clientId: clientId(),
       });
     } catch (e) {
       setSubmitting(false);

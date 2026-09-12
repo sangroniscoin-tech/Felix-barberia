@@ -8,6 +8,59 @@
 // Cuánto dura una reserva temporal. Lo acordado con el cliente: 5 minutos.
 export const HOLD_MINUTES = 5;
 
+// ---------- De quién es una reserva temporal (client_id) ----------
+//
+// Un valor aleatorio y opaco que se genera el propio navegador. NO es una
+// persona y nunca puede serlo: ni teléfono, ni nombre, ni nada derivado de
+// ellos (`ADR.md`: nada de lo público lleva a una persona). Sirve para una
+// sola cosa: que la reserva temporal HUÉRFANA de alguien —la que el servidor
+// llegó a crear, pero cuya respuesta nunca le llegó al móvil— no le bloquee a
+// él mismo durante cinco minutos (#157).
+//
+// Un valor raro se trata como AUSENTE, nunca como un error: quien no lo manda
+// se comporta exactamente como antes de que esto existiera, y uno mal formado
+// no puede costarle la cita a nadie.
+export function sanitizeClientId(v) {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s.length < 8 || s.length > 64) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  return s;
+}
+
+// Retira las reservas temporales que ya tenga este mismo navegador. Es lo que
+// hace que la siguiente se pueda guardar cuando la anterior quedó huérfana, y
+// lo que cumple lo que el código ya decía querer: una persona tiene una sola
+// reserva temporal a la vez.
+//
+// Que falle no rompe la petición: como mucho se vuelve al comportamiento de
+// antes, que es el 409. Deja un aviso en el log porque el fallo que vuelve es
+// invisible desde fuera.
+export async function dropOwnHolds(supabase, clientId) {
+  if (!clientId) return;
+  try {
+    const { error } = await supabase.from("slot_holds").delete().eq("client_id", clientId);
+    if (error) console.warn("[holds] no se pudieron retirar las reservas temporales propias:", error.message);
+  } catch (e) {
+    console.warn("[holds] no se pudieron retirar las reservas temporales propias:", e.message);
+  }
+}
+
+// Soltar lo que ya no hace falta una vez la cita existe: la reserva temporal
+// que mandó el navegador y, si se identificó, cualquier otra suya que hubiera
+// quedado por ahí. Nada de esto puede romper una cita ya guardada, así que
+// todo se traga: caducan solas en unos minutos.
+export async function releaseHolds(supabase, { holdId = null, clientId = null } = {}) {
+  if (holdId) {
+    try {
+      await supabase.from("slot_holds").delete().eq("id", holdId);
+    } catch {
+      // Caduca sola.
+    }
+  }
+  await dropOwnHolds(supabase, clientId);
+}
+
 export function toMin(hhmm) {
   const [h, m] = String(hhmm).slice(0, 5).split(":").map(Number);
   return h * 60 + m;
@@ -44,14 +97,21 @@ export async function liveHoldsFor(supabase, barberId, dateKey) {
 }
 
 // ¿Choca este tramo con alguna reserva temporal viva que no sea la propia?
-// exceptId es el holdId que manda el navegador: su propia reserva no puede
-// impedirle confirmar la cita.
-export async function conflictingHold(supabase, { barberId, dateKey, time, durationMinutes, exceptId }) {
+// "Propia" se sabe de dos maneras, y hacen falta las dos:
+//   - exceptId: el holdId que manda el navegador, cuando lo tiene.
+//   - clientId: el identificador del navegador, para cuando NO lo tiene —
+//     porque la respuesta del POST se perdió por el camino y nunca llegó a
+//     saber el id de la hora que él mismo acababa de reservarse (#157).
+// Sin la segunda, una persona con mala cobertura se choca contra sí misma y
+// se le acusa de ello: "alguien está reservando esa hora", siendo ese alguien
+// ella.
+export async function conflictingHold(supabase, { barberId, dateKey, time, durationMinutes, exceptId, clientId }) {
   const holds = await liveHoldsFor(supabase, barberId, dateKey);
   const start = toMin(time);
   const end = start + durationMinutes;
   return holds.find((h) => {
     if (exceptId && h.id === exceptId) return false;
+    if (clientId && h.client_id && h.client_id === clientId) return false;
     const hStart = toMin(h.start_time);
     return overlaps(start, end, hStart, hStart + h.duration_minutes);
   }) || null;

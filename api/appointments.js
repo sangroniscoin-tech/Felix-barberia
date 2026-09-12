@@ -8,7 +8,7 @@ import {
   appointmentOut, cleanPhone, cleanEmail,
   isValidPhone, isValidEmail, isValidDateKey, isValidTime,
 } from "./_lib/shape.js";
-import { conflictingHold } from "./_lib/holds.js";
+import { conflictingHold, sanitizeClientId, releaseHolds } from "./_lib/holds.js";
 import { readPeople, chainTimes, newGroupId, MAX_GROUP_PEOPLE, MAX_GROUP_PEOPLE_ADMIN } from "./_lib/groups.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { motivoFueraDePlazo } from "../shared/plazo-reserva.js";
@@ -185,6 +185,11 @@ export default async function handler(req, res) {
     // El panel de Félix crea la cita SIN holdId, que es justo lo que hace que
     // le afecten las reservas temporales de quien está reservando por la web.
     const holdId = typeof body.holdId === "string" && body.holdId ? body.holdId : null;
+    // Y de qué navegador viene. Es lo que permite no bloquear a alguien con su
+    // propia reserva temporal cuando NO manda holdId porque nunca llegó a
+    // saberlo: se le cayó la cobertura justo al guardarla (#157). Aleatorio y
+    // opaco, nunca una persona; ausente o raro, todo sigue como hoy.
+    const clientId = sanitizeClientId(body.clientId);
 
     // Una persona o varias. Un solo teléfono y un solo correo para toda la
     // reserva: los de quien reserva. Un nombre por persona.
@@ -257,14 +262,18 @@ export default async function handler(req, res) {
 
       // ¿Hay alguien rellenando sus datos sobre estas horas ahora mismo? Se
       // mira el TRAMO ENTERO del grupo, no solo el de la primera persona. La
-      // reserva temporal propia (la del holdId recibido) no cuenta: si contase,
-      // nadie podría confirmar la cita que acaba de reservarse la hora.
+      // reserva temporal propia no cuenta: si contase, nadie podría confirmar
+      // la cita que acaba de reservarse la hora. Propia por su id cuando el
+      // navegador lo sabe, y por el identificador del navegador cuando no —
+      // que es exactamente el caso que rompía #157: la respuesta del hold se
+      // perdió, así que confirma sin holdId y chocaba contra su propia hora.
       const held = await conflictingHold(supabase, {
         barberId: barber.id,
         dateKey,
         time,
         durationMinutes: totalMinutes,
         exceptId: holdId,
+        clientId,
       });
       if (held) {
         return res.status(409).json({
@@ -334,13 +343,7 @@ export default async function handler(req, res) {
           if (yaGuardada) {
             // La reserva temporal sobra igual que en el camino normal: la
             // cita existe. Que no se borre no rompe nada, caduca sola.
-            if (holdId) {
-              try {
-                await supabase.from("slot_holds").delete().eq("id", holdId);
-              } catch {
-                // Caduca sola.
-              }
-            }
+            await releaseHolds(supabase, { holdId, clientId });
             const mismo = yaGuardada.map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
             // AQUÍ NO SE INSERTA NADA: la respuesta se construye con la fila
             // que ya estaba en la base de datos, y eso es lo que garantiza que
@@ -366,14 +369,11 @@ export default async function handler(req, res) {
       }
 
       // La cita ya existe: la reserva temporal ha cumplido su función y sobra.
-      if (holdId) {
-        try {
-          await supabase.from("slot_holds").delete().eq("id", holdId);
-        } catch {
-          // Si no se borra, caduca sola en unos minutos. La cita está guardada,
-          // que es lo único que no puede fallar aquí.
-        }
-      }
+      // Se suelta la que mandó el navegador y también cualquier otra suya que
+      // hubiera quedado huérfana, para que no se choque consigo mismo en la
+      // siguiente cita (#157). Si no se borra, caduca sola en unos minutos: la
+      // cita está guardada, que es lo único que no puede fallar aquí.
+      await releaseHolds(supabase, { holdId, clientId });
 
       const out = (data || []).map(appointmentOut).sort((a, b) => a.time.localeCompare(b.time));
       waitUntil(tellShop(supabase, out, "booked", req));

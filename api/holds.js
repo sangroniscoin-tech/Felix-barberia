@@ -11,6 +11,7 @@ import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { isValidDateKey, isValidTime, holdOut } from "./_lib/shape.js";
 import {
   HOLD_MINUTES, purgeExpiredHolds, conflictingHold, conflictingAppointment,
+  sanitizeClientId, dropOwnHolds,
 } from "./_lib/holds.js";
 import { readServiceIds } from "./_lib/groups.js";
 
@@ -33,6 +34,10 @@ export default async function handler(req, res) {
     const dateKey = body.dateKey;
     const time = body.time;
     const barberId = body.barberId || "felix";
+    // Quién pide la hora: un identificador aleatorio y opaco del navegador,
+    // nunca una persona. Si no viene, o viene raro, se trata como AUSENTE y
+    // todo se comporta exactamente como antes de que esto existiera (#157).
+    const clientId = sanitizeClientId(body.clientId);
 
     // Un servicio, o los de todo el grupo. Con varios se guarda el TRAMO
     // ENTERO, no solo el de la primera persona: si no, alguien podría colarse
@@ -83,6 +88,18 @@ export default async function handler(req, res) {
         });
       }
 
+      // Justo antes de guardar la nueva, se retiran las que ya tuviera este
+      // mismo navegador. Ésta es la línea que arregla el fallo de #157: la
+      // reserva huérfana que él mismo creó —y cuyo id nunca llegó a conocer
+      // porque se le cayó la cobertura— deja de bloquearle durante cinco
+      // minutos. Y va AQUÍ, después de validar y de mirar si la hora ya está
+      // cogida, para no quitarle la que tenía por una petición que iba a
+      // rechazarse igualmente.
+      //
+      // Sin clientId no se retira nada: quien llama a la API por fuera se
+      // comporta igual que hoy.
+      await dropOwnHolds(supabase, clientId);
+
       const now = new Date();
       const expiresAt = new Date(now.getTime() + HOLD_MINUTES * 60 * 1000);
 
@@ -94,13 +111,17 @@ export default async function handler(req, res) {
         duration_minutes: durationMinutes,
         created_at: now.toISOString(),
         expires_at: expiresAt.toISOString(),
+        client_id: clientId,
       };
 
       const { data, error } = await supabase.from("slot_holds").insert(row).select().single();
 
       if (error) {
         // 23P01 = lo rechazó slot_holds_no_overlap: otra persona está
-        // rellenando sus datos sobre esa misma hora ahora mismo.
+        // rellenando sus datos sobre esa misma hora ahora mismo. Y ahora este
+        // "otra persona" es verdad: las suyas propias se acaban de retirar
+        // unas líneas más arriba, así que lo que queda estorbando es de
+        // alguien más (#157).
         if (error.code === "23P01") {
           return res.status(409).json({
             ok: false,
@@ -111,7 +132,7 @@ export default async function handler(req, res) {
         throw new Error(error.message);
       }
 
-      return res.status(201).json({ ok: true, hold: holdOut(data) });
+      return res.status(201).json({ ok: true, hold: holdOut(data, clientId) });
     } catch (e) {
       return fail(res, e);
     }

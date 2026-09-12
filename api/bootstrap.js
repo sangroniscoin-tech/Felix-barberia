@@ -15,7 +15,7 @@ import {
   serviceOut, barberOut, busyBlockOut, durationOf,
   scheduleOut, blockedRangeOut, vacationOut, holdOut,
 } from "./_lib/shape.js";
-import { purgeExpiredHolds } from "./_lib/holds.js";
+import { purgeExpiredHolds, sanitizeClientId } from "./_lib/holds.js";
 import { claveDeDia } from "../shared/plazo-reserva.js";
 
 export default async function handler(req, res) {
@@ -27,6 +27,12 @@ export default async function handler(req, res) {
     // Barrido oportunista de reservas temporales caducadas. Sin cron: la
     // limpieza va con el uso normal de la aplicación.
     await purgeExpiredHolds(supabase);
+
+    // El navegador puede decir quién es —un valor aleatorio y opaco, nunca una
+    // persona— para que sus propias reservas temporales le salgan marcadas y
+    // no se tape a sí mismo la hora que acaba de elegir (#157). Sin él, todo
+    // sale exactamente como salía.
+    const clientId = sanitizeClientId(req.query && req.query.clientId);
 
     const [services, barbers, appointments, schedule, blockedDays, blockedRanges, festivos, vacations, holds] =
       await Promise.all([
@@ -94,7 +100,7 @@ export default async function handler(req, res) {
       blockedRanges: blockedRanges.data.map(blockedRangeOut),
       festivos: festivos.data.map((r) => r.festivo_date),
       vacationRanges: vacations.data.map(vacationOut),
-      holds: holds.data.map(holdOut),
+      holds: holds.data.map((h) => holdOut(h, clientId)),
     });
   } catch (e) {
     return fail(res, e);
