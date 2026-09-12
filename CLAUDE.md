@@ -118,7 +118,7 @@ The browser no longer calls Google at all: that leg was removed in #53.
 
 - `api/` — the server. `_lib/supabase.js` is the **only** place credentials are read; it
   never enters the browser bundle. Twelve routes: `bootstrap.js` (everything the app needs
-  on load), `appointments.js` (create/cancel), `holds.js` (the 5-minute hold on a chosen
+  on load), `appointments.js` (create/cancel), `holds.js` (the 7-minute hold on a chosen
   time), `my-appointments.js` (a phone's own bookings), `waitlist.js`, `push.js`,
   `admin-session.js` (exchanges the pass for a session), `admin.js` (config),
   `admin-data.js` (the panel's own read), `cierre.js` (the day's takings), `cobro.js` (how
@@ -152,7 +152,7 @@ The browser no longer calls Google at all: that leg was removed in #53.
   to same-origin `/api/*`. Unlike what they replaced, they do **not** swallow errors.
 - Tables (fourteen): `appointments`, `services`, `barbers`, `schedule_ranges`,
   `blocked_days`, `blocked_ranges`, `festivos`, `vacation_ranges`, `waitlist`,
-  `slot_holds` (the 5-minute hold), `daily_closes` (the day's card and bizum totals),
+  `slot_holds` (the 7-minute hold), `daily_closes` (the day's card and bizum totals),
   `push_keys` (the VAPID pair), `push_subscriptions` (Félix's devices), `app_meta`. One row
   per thing — the old whole-JSON-blob model, and its last-write-wins data loss, is gone.
 - **No image is hotlinked any more**: every photo the live app shows is served from
