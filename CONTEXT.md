@@ -89,10 +89,6 @@ acceptance criteria on every change from here on:
   salían esperando gente de días que ya no existían, y la lista que abre tiene que ser la de
   gente a la que puede llamar. Quien dijo «cualquier día» o no dijo ninguno no caduca por
   ahí —no pedía día— y sigue yéndose al año, como dice el aviso de privacidad.
-  **Quien pidió un día concreto se borra solo en cuanto ese día pasa** (#145): a Félix le
-  salían esperando gente de días que ya no existían, y la lista que abre tiene que ser la de
-  gente a la que puede llamar. Quien dijo «cualquier día» o no dijo ninguno no caduca por
-  ahí —no pedía día— y sigue yéndose al año, como dice el aviso de privacidad.
 - **Cuando se cancela una cita, la lista de espera se le pone delante.** El aviso del móvil
   dice a cuántos puede llamar y lleva al panel, a ese día: primero los que encajan por día
   y franja, luego los que dan igual, y abajo, marcados, los que no encajan — se ordena, no
@@ -168,5 +164,24 @@ acceptance criteria on every change from here on:
   le suene el móvil con la app de GitHub se le ofreció el 2026-08-12 y lo declinó**: le vale
   el correo. Es lo único que haría el aviso instantáneo en su bolsillo, así que si algún día
   se queja de enterarse tarde, ese es el sitio por donde se retoma, no la frecuencia.
+- **Nada de recordarle la cita al cliente, de momento** (2026-09-18). Lo pidió él —un SMS a
+  todos los clientes de un día **de una vez**, no uno por uno— y lo aparcó al ver el gasto,
+  con estos números encima de la mesa: 0,05 € por SMS en su tarifa de Digi, unos 9,65 € por
+  avisar todo agosto, frente a los **140 €** que perdió ese mes en ausencias. El diseño
+  quedó cerrado en la entrevista y se retoma desde aquí: un botón en el día que ya tiene
+  abierto en el panel, que abre la app de mensajes de su Android con los teléfonos puestos y
+  el texto escrito —él da a enviar—, con **casillas** (todos marcados, él desmarca), el
+  coste a la vista antes de mandar, la marca de «enviado hoy a las HH:MM» para no avisar dos
+  veces, y el texto **sin tildes**, porque con ellas un SMS cuenta como dos y cuesta el
+  doble. La hora no va en el mensaje —es el mismo para todos— y remite a «Mis citas».
+  **WhatsApp no sirve para esto**: ningún enlace manda a varios a la vez, y una lista de
+  difusión sólo le llega a quien tenga su número guardado y habría que rehacerla cada día;
+  para avisos generales —«cierro por vacaciones»— sí vale y es gratis. **Y el filtro que
+  parecía el ahorro no existe**: falta el 4,3% de quien reserva con tres días o más y el
+  4,1% de quien reserva de un día para otro, así que avisar sólo a los de lejos no ahorra
+  nada — no volver a proponerlo como si ahorrara. ⚠️ Si se retoma, el envío a varios puede
+  juntarlos en un **grupo** y entonces cada cliente vería el teléfono de los demás: dejar
+  comprobado el ajuste de Android de mandar como mensajes individuales es parte del trabajo,
+  no un detalle de después.
 - What the client is offered and declines belongs here as it happens, so it is never
   re-proposed a month later.
