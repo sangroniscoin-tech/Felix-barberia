@@ -315,6 +315,15 @@ npm run dev
 Schema changes ship with `mcp__Supabase__apply_migration` on `project_id:
 ozosjyulagynyxhnvyxr`, never `execute_sql`, so they are recorded as migrations.
 
+**A migration that creates a table grants it to `service_role`, and only to it**, in the
+same migration: `grant select, insert, update, delete on public.<table> to service_role;`
+plus `enable row level security` and a `revoke all … from anon, authenticated`. From
+2026-10-30 Supabase stops granting new `public` tables automatically, so a table without
+that line is unreachable by `api/` — permission denied, not an empty result. Do **not**
+copy the grants to `anon`/`authenticated` from Supabase's own notice: this app gives the
+browser nothing. The fourteen existing tables already hold the right grants (checked
+2026-09-23) and are not affected.
+
 **Never put customer data in a migration.** The 33 rows migrated from Sheets were loaded
 with `execute_sql` on purpose: migrations get copied into backups and checkouts, and names
 and phone numbers should not travel with them.
