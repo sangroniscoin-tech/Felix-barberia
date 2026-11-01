@@ -1295,6 +1295,12 @@ export default function FelixBarberiaApp() {
         @media (prefers-reduced-motion: no-preference) {
           .fade-in { animation: fadeIn 0.35s ease both; }
         }
+        /* Las luces de Navidad titilan despacio, salvo para quien pidió al
+           móvil menos movimiento. */
+        @media (prefers-reduced-motion: no-preference) {
+          .bombilla { animation: titilar 2.8s ease-in-out infinite; }
+        }
+        @keyframes titilar { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
         /* El hueco gris que ocupa el sitio de un dato que todavía no ha llegado.
            Late despacio para que se lea como "cargando" y no como un fallo. */
@@ -1468,6 +1474,82 @@ function esNavidad(hoy = new Date()) {
   return m === 11 || (m === 0 && d <= 6);
 }
 
+// Un reparto que parece al azar pero sale igual en cada visita: así la
+// portada no cambia cada vez que se vuelve a pintar.
+function pseudo(i) {
+  const x = Math.sin(i * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Luces cálidas con su halo, como las de una foto con poca luz.
+function Bombilla({ x, y, r = 2.2, i = 0 }) {
+  return (
+    <g className="bombilla" style={{ animationDelay: `${-(pseudo(i + 7) * 3).toFixed(2)}s` }}>
+      <circle cx={x} cy={y} r={r * 3.2} fill="url(#halo)" />
+      <circle cx={x} cy={y} r={r} fill="#FFE7A3" />
+    </g>
+  );
+}
+
+function DefsLuz() {
+  return (
+    <defs>
+      <radialGradient id="halo">
+        <stop offset="0" stopColor="#FFD36B" stopOpacity="0.95" />
+        <stop offset="1" stopColor="#FFB23E" stopOpacity="0" />
+      </radialGradient>
+      <linearGradient id="pino" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stopColor="#081A0C" />
+        <stop offset="0.45" stopColor="#173D1D" />
+        <stop offset="1" stopColor="#06140A" />
+      </linearGradient>
+    </defs>
+  );
+}
+
+// La guirnalda de pino con luces que cruza la parte de arriba.
+function Guirnalda() {
+  const tramos = 3;
+  const puntos = [];
+  for (let k = 0; k <= 60; k++) {
+    const t = k / 60;
+    puntos.push([t * 400, 10 + 16 * Math.abs(Math.sin(t * Math.PI * tramos))]);
+  }
+  const camino = puntos.map(([x, y], k) => `${k ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  return (
+    <svg aria-hidden="true" viewBox="0 0 400 44" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 44, pointerEvents: "none" }}>
+      <DefsLuz />
+      <path d={camino} fill="none" stroke="#14361A" strokeWidth="9" strokeLinecap="round" />
+      <path d={camino} fill="none" stroke="#2E6B35" strokeWidth="5" strokeDasharray="2 3" strokeLinecap="round" />
+      {puntos.filter((_, k) => k % 2 === 1).map(([x, y], k) => (
+        <Bombilla key={k} x={x + (pseudo(k) - 0.5) * 4} y={y + (pseudo(k + 3) - 0.5) * 6} r={1.7} i={k} />
+      ))}
+    </svg>
+  );
+}
+
+// El árbol, a la izquierda de la foto, lleno de luces y con su estrella.
+function Arbol() {
+  const pisos = [[60, 26, 52], [92, 44, 84], [128, 62, 122], [166, 80, 162], [206, 96, 202]];
+  const luces = Array.from({ length: 90 }, (_, i) => {
+    const y = 34 + pseudo(i) * 168;
+    const ancho = 8 + (y - 30) * 0.47;
+    return [50 + (pseudo(i + 50) - 0.5) * ancho * 1.6, y];
+  });
+  return (
+    <svg aria-hidden="true" viewBox="0 0 100 230" style={{ position: "absolute", left: -6, top: 118, width: 104, height: 240, pointerEvents: "none" }}>
+      <DefsLuz />
+      <rect x="44" y="200" width="12" height="22" fill="#3B2414" />
+      {pisos.map(([abajo, mitad], k) => (
+        <path key={k} d={`M50 ${abajo - mitad - 14} L${50 + mitad} ${abajo} Q50 ${abajo + 8} ${50 - mitad} ${abajo} Z`} fill="url(#pino)" />
+      ))}
+      {luces.map(([x, y], i) => <Bombilla key={i} x={x} y={y} r={1.1 + pseudo(i + 9) * 0.8} i={i} />)}
+      <path d="M50 2 L53 11 L62 11 L55 17 L58 26 L50 20 L42 26 L45 17 L38 11 L47 11 Z" fill="#F2C94C" />
+      <circle cx="50" cy="15" r="14" fill="url(#halo)" />
+    </svg>
+  );
+}
+
 // El gorro, puesto de lado sobre la «x», con la punta cayendo a la derecha.
 function Gorro() {
   return (
@@ -1510,6 +1592,8 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
         <img src={HERO_PHOTO} alt="Félix Barbería" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,11,10,0.62) 0%, rgba(11,11,10,0.80) 55%, #0B0B0A 100%)" }} />
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 15%, rgba(201,162,39,0.18), transparent 60%)" }} />
+        {navidad && <Arbol />}
+        {navidad && <Guirnalda />}
         <div style={{ position: "relative" }} className="fade-in">
           <div style={{ position: "relative", width: 220, margin: "0 auto 22px" }}>
             <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", display: "block" }} />
