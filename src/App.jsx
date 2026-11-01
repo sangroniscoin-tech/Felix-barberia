@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Upload } from "lucide-react";
+import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Upload, Snowflake } from "lucide-react";
 // El plazo de reserva sale de un único sitio, compartido con el servidor. La
 // página no puede ofrecer un día que `POST /api/appointments` vaya a rechazar.
 // `claveDeDia` es el "hoy" de la barbería, en su hora y no en la del móvil: es
@@ -1295,6 +1295,16 @@ export default function FelixBarberiaApp() {
         @media (prefers-reduced-motion: no-preference) {
           .fade-in { animation: fadeIn 0.35s ease both; }
         }
+        /* Navidad: la nieve cae y las luces parpadean, salvo para quien pidió
+           al móvil menos movimiento — a esa persona se le quedan quietas. */
+        .copo { position: absolute; top: -10px; border-radius: 50%; background: #fff; }
+        @media (prefers-reduced-motion: no-preference) {
+          .copo { animation: caer linear infinite; }
+          .luz { animation: parpadeo 1.8s ease-in-out infinite; }
+        }
+        @media (prefers-reduced-motion: reduce) { .copo { top: auto; bottom: 30%; } }
+        @keyframes caer { from { transform: translate(0, -10px); } to { transform: translate(var(--drift), 440px); } }
+        @keyframes parpadeo { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
         /* El hueco gris que ocupa el sitio de un dato que todavía no ha llegado.
            Late despacio para que se lea como "cargando" y no como un fallo. */
@@ -1454,6 +1464,67 @@ function BottomNav({ view, onInicio, onMisCitas, onReservar, onContacto }) {
   );
 }
 
+/* ===================== NAVIDAD ===================== */
+
+// La portada se viste de Navidad del 1 de diciembre al 6 de enero (Reyes),
+// sola: se pone y se quita con la fecha del móvil de quien mira, sin que Félix
+// tenga que acordarse. Todo es CSS y SVG de aquí mismo — ni una imagen ni una
+// fuente de fuera, que es una promesa del aviso de privacidad.
+function esNavidad(hoy = new Date()) {
+  const m = hoy.getMonth(); // 0 = enero
+  const d = hoy.getDate();
+  return m === 11 || (m === 0 && d <= 6);
+}
+
+// Copos fijos, no aleatorios: así la portada se ve igual en cada visita y no
+// cambia al volver a pintarse.
+const COPOS = Array.from({ length: 34 }, (_, i) => ({
+  left: (i * 37) % 100,
+  size: 2 + (i % 3),
+  dur: 7 + (i % 5) * 1.6,
+  delay: -((i * 1.3) % 9),
+  drift: (i % 2 ? 1 : -1) * (6 + (i % 4) * 4),
+  op: 0.35 + (i % 4) * 0.15,
+}));
+
+const LUCES = ["#D23A3A", GOLD_LIGHT, "#3FA34D", "#F4F4F2"];
+
+function Nieve() {
+  return (
+    <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+      {COPOS.map((c, i) => (
+        <span key={i} className="copo" style={{
+          left: `${c.left}%`, width: c.size, height: c.size, opacity: c.op,
+          animationDuration: `${c.dur}s`, animationDelay: `${c.delay}s`, "--drift": `${c.drift}px`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// Una guirnalda de luces colgando de lado a lado, arriba de la portada.
+function Guirnalda() {
+  const n = 13;
+  const puntos = Array.from({ length: n }, (_, i) => {
+    const x = 10 + (i * 380) / (n - 1);
+    const t = (x - 10) / 380;
+    const y = 8 + Math.sin(t * Math.PI * 3) * 6 + 10 * (1 - Math.abs(Math.cos(t * Math.PI * 3)));
+    return { x, y };
+  });
+  const camino = puntos.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  return (
+    <svg aria-hidden="true" viewBox="0 0 400 40" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 34, pointerEvents: "none" }}>
+      <path d={camino} fill="none" stroke="rgba(60,90,50,0.9)" strokeWidth="1.6" />
+      {puntos.map((p, i) => (
+        <g key={i} className="luz" style={{ animationDelay: `${(i % 4) * 0.45}s` }}>
+          <circle cx={p.x} cy={p.y + 6} r="3.6" fill={LUCES[i % LUCES.length]} />
+          <circle cx={p.x} cy={p.y + 6} r="7" fill={LUCES[i % LUCES.length]} opacity="0.25" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 /* ===================== INICIO ===================== */
 
 function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed }) {
@@ -1464,14 +1535,22 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
   // El reparto se hace una vez sobre la lista entera, no servicio a servicio:
   // es lo único que garantiza que no se repita ninguna foto.
   const fotos = useMemo(() => repartirFotos(services), [services]);
+  const navidad = esNavidad();
   return (
     <div>
       <div style={{ position: "relative", padding: "78px 20px 40px", textAlign: "center", overflow: "hidden", minHeight: 420 }}>
         <img src={HERO_PHOTO} alt="Félix Barbería" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,11,10,0.62) 0%, rgba(11,11,10,0.80) 55%, #0B0B0A 100%)" }} />
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 15%, rgba(201,162,39,0.18), transparent 60%)" }} />
+        {navidad && <Nieve />}
+        {navidad && <Guirnalda />}
         <div style={{ position: "relative" }} className="fade-in">
           <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", margin: "0 auto 22px", display: "block" }} />
+          {navidad && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 14px", borderRadius: 999, background: "rgba(160,30,36,0.85)", border: `1px solid ${GOLD}`, color: BONE, fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, marginBottom: 12 }}>
+              <Snowflake size={13} color={GOLD_LIGHT} /> ¡FELICES FIESTAS! <Snowflake size={13} color={GOLD_LIGHT} />
+            </div>
+          )}
           <h1 className="display" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px", textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>Reserva tu cita</h1>
           <p style={{ color: GOLD, fontWeight: 600, fontSize: 14, marginBottom: 22 }}>Rápido, fácil y desde WhatsApp</p>
           <button onClick={() => onReservar(null)} className="gold-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, fontWeight: 700, fontSize: 14, cursor: "pointer", letterSpacing: 0.5 }}>
