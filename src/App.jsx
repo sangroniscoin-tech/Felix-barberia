@@ -1304,6 +1304,12 @@ export default function FelixBarberiaApp() {
         }
         @media (prefers-reduced-motion: reduce) { .copo { top: auto; bottom: 30%; } }
         @keyframes caer { from { transform: translate(0, -10px); } to { transform: translate(var(--drift), 440px); } }
+        @media (prefers-reduced-motion: no-preference) {
+          .bola { animation: balanceo 4s ease-in-out infinite; }
+          .destello { animation: brillo 2.6s ease-in-out infinite; }
+        }
+        @keyframes balanceo { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+        @keyframes brillo { 0%, 100% { opacity: 0.15; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1); } }
         @keyframes parpadeo { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
         /* El hueco gris que ocupa el sitio de un dato que todavía no ha llegado.
@@ -1525,6 +1531,69 @@ function Guirnalda() {
   );
 }
 
+const DISENO_TMP = () => (typeof window !== "undefined" && window.__DISENO__) || "A";
+
+// Dos bolas de árbol colgando de un hilo desde arriba, una a cada lado.
+function Bolas() {
+  const bola = (x, largo, color, retraso) => (
+    <g className="bola" style={{ transformOrigin: `${x}px 0px`, animationDelay: retraso }}>
+      <line x1={x} y1="0" x2={x} y2={largo} stroke={GOLD} strokeWidth="1" opacity="0.8" />
+      <rect x={x - 4} y={largo - 2} width="8" height="6" rx="1.5" fill={GOLD} />
+      <circle cx={x} cy={largo + 17} r="14" fill={color} />
+      <circle cx={x - 5} cy={largo + 12} r="4" fill="#fff" opacity="0.35" />
+      <path d={`M${x - 14},${largo + 17} Q${x},${largo + 23} ${x + 14},${largo + 17}`} stroke={GOLD_LIGHT} strokeWidth="1.4" fill="none" opacity="0.9" />
+    </g>
+  );
+  return (
+    <svg aria-hidden="true" viewBox="0 0 390 170" preserveAspectRatio="xMidYMin meet" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 170, pointerEvents: "none" }}>
+      {bola(30, 92, "#9E1B24", "0s")}
+      {bola(62, 54, GOLD, "-1.2s")}
+      {bola(330, 64, GOLD, "-0.6s")}
+      {bola(360, 104, "#9E1B24", "-1.8s")}
+    </svg>
+  );
+}
+
+// Destellos dorados que se encienden y se apagan, repartidos por la foto.
+const DESTELLOS = [[12, 30], [88, 26], [8, 62], [93, 58], [20, 80], [80, 84], [50, 8], [70, 40], [30, 44]];
+function Destellos() {
+  return (
+    <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+      {DESTELLOS.map(([x, y], i) => (
+        <svg key={i} className="destello" viewBox="0 0 20 20" style={{ position: "absolute", left: `${x}%`, top: `${y}%`, width: 10 + (i % 3) * 4, height: 10 + (i % 3) * 4, animationDelay: `${-(i * 0.7)}s` }}>
+          <path d="M10 0 L12 8 L20 10 L12 12 L10 20 L8 12 L0 10 L8 8 Z" fill={GOLD_LIGHT} />
+        </svg>
+      ))}
+    </div>
+  );
+}
+
+// Un gorro de Papá Noel encima de la «F» del logo.
+function Gorro() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 60 50" style={{ position: "absolute", top: -14, left: "50%", marginLeft: -78, width: 58, height: 48, transform: "rotate(-18deg)", pointerEvents: "none" }}>
+      <path d="M6 38 Q20 4 44 8 Q56 12 54 30 L50 30 Q48 18 40 18 Q26 20 20 38 Z" fill="#C62828" />
+      <rect x="2" y="34" width="34" height="10" rx="5" fill="#F4F4F2" />
+      <circle cx="53" cy="32" r="6" fill="#F4F4F2" />
+    </svg>
+  );
+}
+
+// Ramitas de acebo en las dos esquinas de abajo de la portada.
+function Acebo({ lado }) {
+  const espejo = lado === "der" ? "scale(-1,1)" : "none";
+  return (
+    <svg aria-hidden="true" viewBox="0 0 90 70" style={{ position: "absolute", bottom: 6, [lado === "der" ? "right" : "left"]: 4, width: 90, height: 70, transform: espejo, pointerEvents: "none" }}>
+      <path d="M8 60 C20 40 30 36 48 30 C40 42 30 50 8 60 Z" fill="#2E7D32" />
+      <path d="M14 62 C34 58 50 52 70 54 C56 62 38 66 14 62 Z" fill="#1B5E20" />
+      <path d="M20 54 C26 34 36 22 40 8 C46 24 40 40 20 54 Z" fill="#388E3C" />
+      <circle cx="22" cy="56" r="5" fill="#D32F2F" />
+      <circle cx="30" cy="58" r="5" fill="#C62828" />
+      <circle cx="26" cy="49" r="5" fill="#E53935" />
+    </svg>
+  );
+}
+
 /* ===================== INICIO ===================== */
 
 function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed }) {
@@ -1542,13 +1611,26 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
         <img src={HERO_PHOTO} alt="Félix Barbería" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,11,10,0.62) 0%, rgba(11,11,10,0.80) 55%, #0B0B0A 100%)" }} />
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 15%, rgba(201,162,39,0.18), transparent 60%)" }} />
-        {navidad && <Nieve />}
-        {navidad && <Guirnalda />}
+        {navidad && DISENO_TMP() === "A" && <Bolas />}
+        {navidad && DISENO_TMP() === "A" && <Destellos />}
+        {navidad && DISENO_TMP() === "B" && <Nieve />}
+        {navidad && DISENO_TMP() === "B" && <Acebo lado="izq" />}
+        {navidad && DISENO_TMP() === "B" && <Acebo lado="der" />}
         <div style={{ position: "relative" }} className="fade-in">
-          <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", margin: "0 auto 22px", display: "block" }} />
-          {navidad && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 14px", borderRadius: 999, background: "rgba(160,30,36,0.85)", border: `1px solid ${GOLD}`, color: BONE, fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, marginBottom: 12 }}>
-              <Snowflake size={13} color={GOLD_LIGHT} /> ¡FELICES FIESTAS! <Snowflake size={13} color={GOLD_LIGHT} />
+          <div style={{ position: "relative", width: 220, margin: "0 auto 22px" }}>
+            <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", display: "block" }} />
+            {navidad && DISENO_TMP() === "B" && <Gorro />}
+          </div>
+          {navidad && DISENO_TMP() === "A" && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 28, height: 1, background: GOLD }} />
+              <span className="display" style={{ color: GOLD_LIGHT, fontStyle: "italic", fontSize: 19, fontWeight: 600 }}>Felices fiestas</span>
+              <span style={{ width: 28, height: 1, background: GOLD }} />
+            </div>
+          )}
+          {navidad && DISENO_TMP() === "B" && (
+            <div style={{ display: "inline-block", padding: "5px 16px", borderRadius: 8, background: "#1B5E20", border: "2px solid #C62828", color: BONE, fontSize: 14, fontWeight: 800, letterSpacing: 0.8, marginBottom: 12 }}>
+              🎄 ¡FELIZ NAVIDAD! 🎄
             </div>
           )}
           <h1 className="display" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px", textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>Reserva tu cita</h1>
