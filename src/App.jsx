@@ -1571,7 +1571,7 @@ function Destellos() {
 // Un gorro de Papá Noel encima de la «F» del logo.
 function Gorro() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 60 50" style={{ position: "absolute", top: -20, left: "50%", marginLeft: 12, width: 62, height: 52, transform: "scaleX(-1) rotate(-22deg)", pointerEvents: "none" }}>
+    <svg aria-hidden="true" viewBox="0 0 60 50" style={{ position: "absolute", top: -38, left: "50%", marginLeft: 14, width: 82, height: 68, transform: "rotate(8deg)", pointerEvents: "none" }}>
       <path d="M6 38 Q20 4 44 8 Q56 12 54 30 L50 30 Q48 18 40 18 Q26 20 20 38 Z" fill="#C62828" />
       <rect x="2" y="34" width="34" height="10" rx="5" fill="#F4F4F2" />
       <circle cx="53" cy="32" r="6" fill="#F4F4F2" />
