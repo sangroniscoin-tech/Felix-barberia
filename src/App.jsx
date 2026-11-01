@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Mail, Upload } from "lucide-react";
+import { Scissors, User, Phone, Check, X, Calendar, Search, Lock, Plus, ChevronLeft, ChevronRight, ArrowLeft, Sparkles, ShieldCheck, KeyRound, MapPin, MessageCircle, CalendarPlus, Download, Menu, Home, Bell, XCircle, Clock, Upload } from "lucide-react";
 // El plazo de reserva sale de un único sitio, compartido con el servidor. La
 // página no puede ofrecer un día que `POST /api/appointments` vaya a rechazar.
 // `claveDeDia` es el "hoy" de la barbería, en su hora y no en la del móvil: es
@@ -564,10 +564,6 @@ function phoneDigits(v) {
 }
 function isPhoneValid(v) {
   return /^[0-9]{9,15}$/.test(phoneDigits(v));
-}
-function isEmailValid(v) {
-  const e = String(v || "").trim();
-  return e === "" || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 }
 
 function readFileAsDataUrl(file) {
@@ -1575,7 +1571,7 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
       </div>
 
       <div style={{ padding: "0 20px 28px", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
-        <FeatureItem icon={Bell} title="Recordatorios" detail="Te enviamos un aviso antes de tu cita." />
+        <FeatureItem icon={Search} title="Tu cita, a mano" detail="Búscala con tu teléfono cuando quieras." />
         <FeatureItem icon={XCircle} title="Cancelaciones" detail="Puedes cancelar hasta 3 horas antes." />
         <FeatureItem icon={ShieldCheck} title="Seguro y fácil" detail="Tus datos están protegidos." />
         <FeatureItem icon={MessageCircle} title="¿Dudas o prefieres reservar por WhatsApp?" detail="Escríbenos y te ayudamos." />
@@ -1731,8 +1727,7 @@ function Privacidad({ embedded = false }) {
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li>Tu <strong style={{ color: BONE }}>nombre</strong>.</li>
           <li>Tu <strong style={{ color: BONE }}>teléfono</strong>.</li>
-          <li>Tu <strong style={{ color: BONE }}>correo electrónico</strong>, solo si lo escribes: es opcional.</li>
-          <li>El servicio, el día y la hora que eliges.</li>
+                    <li>El servicio, el día y la hora que eliges.</li>
         </ul>
         <p style={{ margin: "8px 0 0" }}>
           Nada más. No te pedimos DNI, ni dirección, ni datos de pago, porque en la barbería se
@@ -2066,13 +2061,12 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
   const [step, setStep] = useState(1);
   const [barberId, setBarberId] = useState(singleBarber ? barbers[0].id : null);
   // Quiénes vienen: una persona (lo de siempre) o hasta tres. Cada una lleva su
-  // servicio y su nombre; el teléfono y el correo son de quien reserva y van
+  // servicio y su nombre; el teléfono es de quien reserva y va
   // una sola vez, más abajo.
   const [people, setPeople] = useState(() => [{ service: preselected || null, name: "" }]);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTime, setSelectedTime] = useState(null);
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
   const [verPrivacidad, setVerPrivacidad] = useState(false);
   // Las citas que han quedado guardadas: una, o las del grupo entero.
   const [confirmedAppts, setConfirmedAppts] = useState(null);
@@ -2280,7 +2274,6 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
         people: people.map((p) => ({ service: p.service.id, name: p.name })),
         barberId,
         phone,
-        email: email.trim() || null,
         holdId: currentHold ? currentHold.id : undefined,
         // Y quién lo pide. Cuando la respuesta del hold no llegó no hay
         // holdId que mandar, y esto es lo único que le dice al servidor que la
@@ -2601,8 +2594,8 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {/* Un nombre por persona, para que en el panel se lea "Juan" y
-                "Hugo" y no el mismo nombre dos veces. El teléfono y el correo
-                son de quien reserva, y se piden una sola vez. */}
+                "Hugo" y no el mismo nombre dos veces. El teléfono es de quien
+                reserva, y se pide una sola vez. */}
             {people.map((p, i) => (
               <label key={i} style={{ fontSize: 12, color: SMOKE }}>
                 {groupBooking ? `Nombre de la persona ${i + 1} (${p.service.name}, ${personTimes[i]})` : "Nombre"}
@@ -2623,15 +2616,6 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
                 </span>
               )}
             </label>
-            <label style={{ fontSize: 12, color: SMOKE }}>Correo (opcional, para el recordatorio)
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#161513", border: `1px solid ${email && !isEmailValid(email) ? "#8a4b4b" : "rgba(255,255,255,0.2)"}`, borderRadius: 10, padding: "10px 12px", marginTop: 4 }}>
-                <Mail size={15} color={GOLD} />
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value.slice(0, 254))} autoComplete="email" placeholder="tucorreo@ejemplo.com" style={{ background: "none", border: "none", color: BONE, fontSize: 14, flex: 1, outline: "none" }} />
-              </div>
-              {email && !isEmailValid(email) && (
-                <span style={{ color: "#f2a6a6", fontSize: 11.5, display: "block", marginTop: 4 }}>Ese correo no parece válido.</span>
-              )}
-            </label>
           </div>
           {/* El aviso va aquí, justo donde se entregan los datos. Es un enlace,
               no una casilla: la base jurídica es la propia reserva, y una
@@ -2650,7 +2634,7 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
               desmontaría la reserva a medias y perdería la hora guardada y lo
               ya escrito. Es el mismo texto que la página del menú. */}
           {verPrivacidad && <PrivacidadOverlay onClose={() => setVerPrivacidad(false)} />}
-          <button disabled={!allNamesFilled || !isPhoneValid(phone) || !isEmailValid(email) || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 14, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
+          <button disabled={!allNamesFilled || !isPhoneValid(phone) || submitting} onClick={confirmBooking} className="gold-btn" style={{ width: "100%", marginTop: 14, padding: 14, borderRadius: 12, fontWeight: 700, fontSize: 14 }}>
             {submitting ? "Comprobando disponibilidad…" : groupBooking ? "Confirmar las citas" : "Confirmar cita"}
           </button>
         </div>
@@ -2720,7 +2704,7 @@ function ClientBooking({ services, barbers, appointments, holds, latestHoldsRef,
               })()}
 
               <p style={{ fontSize: 12, color: SMOKE, marginBottom: 18 }}>
-                Recibirás un recordatorio automático el día antes. Puedes cancelar hasta 3 horas antes de tu cita.
+                Añádela a tu calendario y tu móvil te la recordará. Puedes cancelar hasta 3 horas antes de tu cita.
               </p>
               <button
                 onClick={() => canCancel(confirmedAppt) && cancelConfirmed()}
