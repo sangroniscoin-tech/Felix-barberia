@@ -11,6 +11,7 @@ import { requireAdmin } from "./_lib/adminAuth.js";
 import { armarCopia } from "./_lib/copia.js";
 import { restaurarCopia, CopiaInvalida } from "./_lib/restaurar.js";
 import { CLAVE_ULTIMA_COPIA } from "./_lib/meta.js";
+import { leerParam } from "./_lib/query.js";
 
 // Un día, o nada. Lo que llegue en la query lo escribe quien quiera: si no es
 // exactamente una fecha, no se consulta nada — nunca se mete en la consulta
@@ -67,7 +68,7 @@ export default async function handler(req, res) {
     //
     // Quien no pide la copia no se entera de que existe: sin el parámetro, la
     // respuesta de siempre no lleva ni un campo de más por este lado.
-    if (req.query && req.query.copia) {
+    if (leerParam(req, "copia")) {
       const copia = await armarCopia(supabase);
       // Datos personales: no se cachean en ningún sitio, nunca. Menos aún
       // éstos, que son la clientela entera en un solo fichero.
@@ -81,7 +82,7 @@ export default async function handler(req, res) {
     //
     // Un día concreto y no todas: el panel no tiene ninguna pantalla de
     // canceladas —eso es otra tarea— y lo que no hace falta no se sirve.
-    const dia = pedirDia(req.query && req.query.canceladas);
+    const dia = pedirDia(leerParam(req, "canceladas"));
 
     const consultas = [
       // Esta consulta NO cambia. El dinero, los recuentos, los rankings y la

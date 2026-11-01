@@ -14,6 +14,7 @@ import { getSupabase, fail, methodNotAllowed } from "./_lib/supabase.js";
 import { requireAdmin } from "./_lib/adminAuth.js";
 import { closeOut } from "./_lib/shape.js";
 import { claveDeDia } from "../shared/plazo-reserva.js";
+import { leerParam } from "./_lib/query.js";
 
 // La barbería está en Zaragoza y Vercel corre en UTC. "Hoy" y "esa hora ya ha
 // pasado" se deciden en la hora de la barbería, igual que el plazo de reserva:
@@ -133,7 +134,7 @@ export default async function handler(req, res) {
   }
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
-  const dateKey = body.dateKey ?? (req.query && req.query.dia);
+  const dateKey = body.dateKey ?? leerParam(req, "dia");
 
   if (!esFecha(dateKey)) {
     return invalido(res, "dateKey", "La fecha del cierre no es válida.");

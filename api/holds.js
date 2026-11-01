@@ -14,6 +14,7 @@ import {
   sanitizeClientId, dropOwnHolds,
 } from "./_lib/holds.js";
 import { readServiceIds } from "./_lib/groups.js";
+import { leerParam } from "./_lib/query.js";
 
 function bad(res, message, field) {
   return res.status(400).json({ ok: false, reason: "invalid_input", field, message });
@@ -144,7 +145,7 @@ export default async function handler(req, res) {
   // suelta quiere que no esté, y no está.
   if (req.method === "DELETE") {
     const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
-    const id = body.id || (req.query && req.query.id);
+    const id = body.id || leerParam(req, "id");
     if (!id) return bad(res, "Falta el identificador de la reserva.", "id");
 
     try {
