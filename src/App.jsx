@@ -1571,7 +1571,7 @@ function Destellos() {
 // Un gorro de Papá Noel encima de la «F» del logo.
 function Gorro() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 60 50" style={{ position: "absolute", top: -14, left: "50%", marginLeft: -78, width: 58, height: 48, transform: "rotate(-18deg)", pointerEvents: "none" }}>
+    <svg aria-hidden="true" viewBox="0 0 60 50" style={{ position: "absolute", top: -31, left: "50%", marginLeft: -50, width: 62, height: 52, transform: "rotate(-22deg)", pointerEvents: "none" }}>
       <path d="M6 38 Q20 4 44 8 Q56 12 54 30 L50 30 Q48 18 40 18 Q26 20 20 38 Z" fill="#C62828" />
       <rect x="2" y="34" width="34" height="10" rx="5" fill="#F4F4F2" />
       <circle cx="53" cy="32" r="6" fill="#F4F4F2" />
@@ -1619,7 +1619,7 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
         <div style={{ position: "relative" }} className="fade-in">
           <div style={{ position: "relative", width: 220, margin: "0 auto 22px" }}>
             <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", display: "block" }} />
-            {navidad && DISENO_TMP() === "B" && <Gorro />}
+            {navidad && <Gorro />}
           </div>
           {navidad && DISENO_TMP() === "A" && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
