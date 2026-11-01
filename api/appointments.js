@@ -17,6 +17,7 @@ import { bookingNotice, cancellationNotice } from "./_lib/notify.js";
 import { cuantosEsperanPor } from "./_lib/espera.js";
 import { sendPush } from "./_lib/push.js";
 import { waitUntil } from "@vercel/functions";
+import { leerParam } from "./_lib/query.js";
 
 // Hace sonar el móvil de Félix. Nunca lanza y nunca se le deja romper la
 // respuesta: si el aviso falla, la cita ya está guardada, que es lo único que
@@ -394,7 +395,7 @@ export default async function handler(req, res) {
     // Con groupId se anula la reserva entera de una vez: todas las citas de ese
     // grupo que sigan en pie. Con id se anula una sola persona y las demás se
     // quedan con su hora — a nadie se le adelanta la suya.
-    const groupId = body.groupId || (req.query && req.query.groupId);
+    const groupId = body.groupId || leerParam(req, "groupId");
     if (groupId) {
       try {
         const { data, error } = await supabase
@@ -415,7 +416,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const id = body.id || (req.query && req.query.id);
+    const id = body.id || leerParam(req, "id");
     if (!id) return bad(res, "Falta el identificador de la cita.", "id");
 
     const allowed = ["booked", "no_show", "cancelled"];

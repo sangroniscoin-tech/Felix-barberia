@@ -17,6 +17,7 @@ import {
 } from "./_lib/shape.js";
 import { purgeExpiredHolds, sanitizeClientId } from "./_lib/holds.js";
 import { claveDeDia } from "../shared/plazo-reserva.js";
+import { leerParam } from "./_lib/query.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"]);
@@ -32,7 +33,7 @@ export default async function handler(req, res) {
     // persona— para que sus propias reservas temporales le salgan marcadas y
     // no se tape a sí mismo la hora que acaba de elegir (#157). Sin él, todo
     // sale exactamente como salía.
-    const clientId = sanitizeClientId(req.query && req.query.clientId);
+    const clientId = sanitizeClientId(leerParam(req, "clientId"));
 
     const ahora = Date.now();
 
