@@ -1994,6 +1994,32 @@ function manualTimeReason({ dateObj, time, durationMin, barberId, appointments, 
   return "no cae en uno de los huecos que se ofrecen, aunque está libre";
 }
 
+// Las citas que un cierre (horas bloqueadas, día suelto, vacaciones o festivo)
+// deja dentro. Es un AVISO para Félix: no cancela ni toca ninguna cita. Cuenta
+// sólo las VIVAS (la lista de citas del panel ya no trae las canceladas, y las
+// marcadas como no presentado se descartan aquí) y las que TODAVÍA no han
+// terminado: lo que ya ha pasado no tiene arreglo. Una cita cuenta si se
+// SOLAPA con el cierre, con la duración que guarda ella misma.
+//   {tipo:"rango", dateKey, start, end} · {tipo:"dia", dateKey} · {tipo:"vacaciones", start, end}
+function citasDentroDeCierre(cierre, appointments, now = new Date()) {
+  const k0 = cierre.tipo === "vacaciones" ? cierre.start : cierre.dateKey;
+  const k1 = cierre.tipo === "vacaciones" ? cierre.end : cierre.dateKey;
+  const b0 = cierre.tipo === "rango" ? toMin(cierre.start) : 0;
+  const b1 = cierre.tipo === "rango" ? toMin(cierre.end) : 24 * 60;
+  const hoy = dateKey(now);
+  const ahora = now.getHours() * 60 + now.getMinutes();
+  return appointments
+    .filter((a) => {
+      if (a.noShow || a.cancelada || !a.dateKey || !a.time) return false;
+      if (a.dateKey < k0 || a.dateKey > k1) return false;
+      const ini = toMin(a.time);
+      const fin = ini + (a.duration || 30);
+      if (a.dateKey < hoy || (a.dateKey === hoy && fin <= ahora)) return false;
+      return ini < b1 && b0 < fin;
+    })
+    .sort((x, y) => (x.dateKey + x.time).localeCompare(y.dateKey + y.time));
+}
+
 // El tope de personas por reserva. Aquí es comodidad: quien de verdad manda es
 // el servidor, que lo vuelve a comprobar aunque alguien se salte la web.
 const MAX_PERSONAS = 3;
@@ -3368,6 +3394,28 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   // avisar de algo que no ha ocurrido es peor que no ofrecer nada.
   const [avisarCancelada, setAvisarCancelada] = useState(null);
 
+  // Las citas que ya hay dentro de un cierre. `onConfirm` sólo existe al añadir
+  // (guarda el cierre); al abrirlo desde un ⚠ de Ajustes sólo se ve la lista.
+  const [citasDentro, setCitasDentro] = useState(null);
+  const marcaCitas = (cierre) => citasDentroDeCierre(cierre, appointments);
+  // Guarda directo si no hay citas dentro; si las hay, pregunta antes.
+  function guardarCierre(cierre, guardar) {
+    const citas = marcaCitas(cierre);
+    if (citas.length === 0) { guardar(); return; }
+    setCitasDentro({ citas, onConfirm: () => { setCitasDentro(null); guardar(); } });
+  }
+  const avisoCitas = (cierre) => {
+    const citas = marcaCitas(cierre);
+    return citas.length === 0 ? null : (
+      <button
+        onClick={() => setCitasDentro({ citas, onConfirm: null })}
+        style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", fontSize: 11.5, padding: 0, textDecoration: "underline" }}
+      >
+        ⚠ {citas.length === 1 ? "1 cita dentro" : `${citas.length} citas dentro`}
+      </button>
+    );
+  };
+
   // Vivo mientras el panel esté montado. Se mira antes de tocar el estado desde
   // una carga que ya venía en camino.
   const vivoRef = useRef(true);
@@ -3868,13 +3916,13 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
   }
 
   function blockRange(data) {
-    setBlockedRanges([...blockedRanges, data]);
     setShowBlock(false);
+    guardarCierre({ tipo: "rango", ...data }, () => setBlockedRanges([...blockedRanges, data]));
   }
 
   function addVacation(data) {
-    setVacationRanges([...vacationRanges, data]);
     setShowVacation(false);
+    guardarCierre({ tipo: "vacaciones", ...data }, () => setVacationRanges([...vacationRanges, data]));
   }
 
   function addService(data) {
@@ -4228,7 +4276,8 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <SettingsBlock
                 title="Días festivos"
                 items={festivos}
-                onAdd={(v) => setFestivos([...festivos, v])}
+                onAdd={(v) => guardarCierre({ tipo: "dia", dateKey: v }, () => setFestivos([...festivos, v]))}
+                aviso={(d) => avisoCitas({ tipo: "dia", dateKey: d })}
                 onRemove={(i) => {
                   if (confirmarApertura(`el festivo del ${diaHumano(festivos[i])}`)) {
                     setFestivos(festivos.filter((_, j) => j !== i));
@@ -4238,7 +4287,8 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
               <SettingsBlock
                 title="Días bloqueados sueltos"
                 items={blockedDays}
-                onAdd={(v) => setBlockedDays([...blockedDays, v])}
+                onAdd={(v) => guardarCierre({ tipo: "dia", dateKey: v }, () => setBlockedDays([...blockedDays, v]))}
+                aviso={(d) => avisoCitas({ tipo: "dia", dateKey: d })}
                 onRemove={(i) => {
                   if (confirmarApertura(`el bloqueo del ${diaHumano(blockedDays[i])}`)) {
                     setBlockedDays(blockedDays.filter((_, j) => j !== i));
@@ -4250,6 +4300,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                 {vacationRanges.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguno</span> : vacationRanges.map((r, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
                     <span style={{ fontSize: 12.5, flex: 1 }}>Del {r.start} al {r.end}</span>
+                    {avisoCitas({ tipo: "vacaciones", start: r.start, end: r.end })}
                     <button
                       onClick={() => {
                         if (confirmarApertura(`las vacaciones del ${diaHumano(r.start)} al ${diaHumano(r.end)}`)) {
@@ -4270,6 +4321,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
                   blockedRanges.map((r, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
                       <span style={{ fontSize: 12.5, flex: 1 }}>{r.dateKey} · {r.start}–{r.end} {r.label ? `(${r.label})` : ""}</span>
+                      {avisoCitas({ tipo: "rango", dateKey: r.dateKey, start: r.start, end: r.end })}
                       <button
                         onClick={() => {
                           if (confirmarApertura(`las horas bloqueadas del ${diaHumano(r.dateKey)}, de ${r.start} a ${r.end}`)) {
@@ -4292,6 +4344,7 @@ function AdminPanel({ services, setServices, barbers, setBarbers, appointments, 
       {/* Se monta encima de la lista de espera del día, que la cancelación
           acaba de destapar. Ése es el orden bueno: primero se avisa a quien se
           queda sin cita, y después se mira a quién se le ofrece el hueco. */}
+      {citasDentro && <CitasDentroModal citas={citasDentro.citas} services={services} onConfirm={citasDentro.onConfirm} onClose={() => setCitasDentro(null)} />}
       {avisarCancelada && <AvisarCanceladaModal appt={avisarCancelada} onClose={() => setAvisarCancelada(null)} />}
 
       {selectedAppt && <ApptModal appt={selectedAppt} services={services} barbers={barbers} groupSize={groupSizes[selectedAppt.groupId]} onClose={() => setSelectedAppt(null)} onCancel={() => cancelAppt(selectedAppt.id)} onToggleNoShow={() => toggleNoShow(selectedAppt.id)} />}
@@ -5480,7 +5533,7 @@ function confirmarApertura(queSeQuita) {
 // la rechaza. Por eso aquí no se pinta ningún resultado por cuenta propia: dar
 // por bueno un guardado que no lo fue es exactamente lo que esa función existe
 // para impedir.
-function SettingsBlock({ title, items, onAdd, onRemove }) {
+function SettingsBlock({ title, items, onAdd, onRemove, aviso }) {
   const [val, setVal] = useState("");
   return (
     <div className="card" style={{ borderRadius: 12, padding: 14 }}>
@@ -5488,6 +5541,7 @@ function SettingsBlock({ title, items, onAdd, onRemove }) {
       {items.length === 0 ? <span style={{ fontSize: 12, color: SMOKE }}>Ninguno</span> : items.map((d, i) => (
         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
           <span style={{ fontSize: 12.5, flex: 1 }}>{d}</span>
+          {aviso && aviso(d)}
           <button onClick={() => onRemove(i)} aria-label={`Quitar ${d}`} title="Quitar" style={{ background: "none", border: "none", color: "#e0a0a0", cursor: "pointer", display: "flex", padding: 0 }}><X size={14} /></button>
         </div>
       ))}
@@ -5581,6 +5635,65 @@ function AvisarCanceladaModal({ appt, onClose }) {
             Cerrar
           </button>
         </>
+      )}
+    </ModalShell>
+  );
+}
+
+// Lo que se le escribe a quien ya tenía cita dentro de lo que Félix cierra.
+function mensajeCierre(appt) {
+  const nombre = String(appt.name || "").trim();
+  const hola = nombre ? `Hola ${nombre}` : "Hola";
+  return `${hola}, soy Félix de Félix Barbería. Al final no voy a poder atenderte el ${diaHumano(appt.dateKey)} a las ${appt.time}. ¿Te viene bien cambiarla a otro día u hora?`;
+}
+
+// Las citas que hay dentro de un cierre. Con `onConfirm` (al añadir) ofrece
+// "Bloquear igualmente" y "No bloquear"; sin él (al tocar un ⚠ de Ajustes) sólo
+// enseña la lista. Nada de aquí cancela ni cambia una cita, ni manda un mensaje
+// solo: el WhatsApp abre el chat con el texto puesto y lo envía Félix.
+function CitasDentroModal({ citas, services, onConfirm, onClose }) {
+  return (
+    <ModalShell title="Hay citas dentro" onClose={onClose}>
+      <div style={{ fontSize: 13, color: BONE, lineHeight: 1.5 }}>
+        {citas.length === 1 ? "Ya hay 1 cita dentro de esto." : `Ya hay ${citas.length} citas dentro de esto.`} Bloquear no las cancela: siguen ahí hasta que hables con esos clientes.
+      </div>
+      <div style={{ marginTop: 10 }}>
+        {citas.map((a) => {
+          const numero = waMeNumero(a.phone);
+          return (
+            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ flex: 1, fontSize: 12.5, lineHeight: 1.4 }}>
+                <div style={{ fontWeight: 600 }}>{diaHumano(a.dateKey)} · {a.time}</div>
+                <div style={{ color: SMOKE, fontStyle: a.name ? undefined : "italic" }}>{shownName(a)} · {services.find((x) => x.id === a.service)?.name || a.service}</div>
+              </div>
+              {numero && (
+                <a
+                  href={`https://wa.me/${numero}?text=${encodeURIComponent(mensajeCierre(a))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ghost-btn"
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8, fontSize: 12, textDecoration: "none" }}
+                >
+                  <MessageCircle size={14} /> WhatsApp
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {onConfirm ? (
+        <>
+          <button onClick={onConfirm} className="gold-btn" style={{ width: "100%", marginTop: 14, padding: 13, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+            Bloquear igualmente
+          </button>
+          <button onClick={onClose} className="ghost-btn" style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
+            No bloquear
+          </button>
+        </>
+      ) : (
+        <button onClick={onClose} className="ghost-btn" style={{ width: "100%", marginTop: 14, padding: 11, borderRadius: 10, fontSize: 12.5, cursor: "pointer" }}>
+          Cerrar
+        </button>
       )}
     </ModalShell>
   );
