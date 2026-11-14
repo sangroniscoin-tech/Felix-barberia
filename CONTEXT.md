@@ -147,10 +147,10 @@ acceptance criteria on every change from here on:
   él, elegirlas yo, o mezcla: eligió que las eligiera yo. Se guardan en `public/servicios/`,
   así que además dejaron de pedirse a Unsplash, que era lo que rompía la promesa de arriba
   sin que nadie lo viera.
-- **No restore button, and no copy that uploads itself.** The backup is a file he
-  downloads and forwards by hand: sending it anywhere on its own means another service and
-  another credential, and restoring is a rare, dangerous operation done with someone
-  watching, not with a button. Both were offered as scope and deliberately left out.
+- **Bloquear nunca cancela las citas que quedan dentro** (#172). Al cerrar horas, un día,
+  vacaciones o un festivo se le enseñan las citas vivas que pisa, con su WhatsApp, y decide
+  él; la marca «⚠ N citas dentro» sigue en Ajustes mientras quede alguna. Cancelarlas solas
+  es justo lo que se descartó: es su cliente y es él quien habla con él.
 - **No install-the-app banner.** Already installable, and he has a QR poster; a prompt at
   the door interrupts the one thing a customer came to do. Parked, not refused.
 - **No automatic message to the customer when a hueco frees up**, declined 2026-08-07: an
