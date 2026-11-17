@@ -1454,6 +1454,50 @@ function BottomNav({ view, onInicio, onMisCitas, onReservar, onContacto }) {
   );
 }
 
+/* ===================== NAVIDAD ===================== */
+
+// La portada se viste de Navidad del 1 de diciembre al 6 de enero (Reyes),
+// sola: se pone y se quita con la fecha del móvil de quien mira. Fuera de esas
+// fechas la portada es exactamente la de siempre (#171).
+//
+// Lo eligió Félix entre muchas pruebas: la foto de siempre, un gorro rojo
+// oscuro sobre la «x» del logo y «Felices fiestas» en dorado. Nada más — sin
+// nieve, árbol, verde ni luces doradas, que descartó. Todo se dibuja aquí; ni
+// una imagen ni una fuente de fuera (promesa del aviso de privacidad).
+function esNavidad(hoy = new Date()) {
+  const m = hoy.getMonth(); // 0 = enero
+  return m === 11 || (m === 0 && hoy.getDate() <= 6);
+}
+
+// El gorro, puesto de lado sobre la «x», con la punta cayendo a la derecha.
+function Gorro() {
+  const borde = [6, 13, 20, 27, 34, 41, 48, 55];
+  return (
+    <svg aria-hidden="true" viewBox="0 0 104 84" style={{ position: "absolute", top: -42, left: "50%", marginLeft: 22, width: 82, height: 66, transform: "rotate(10deg)", pointerEvents: "none", filter: "drop-shadow(0 4px 5px rgba(0,0,0,0.5))" }}>
+      <defs>
+        <linearGradient id="gorroTela" x1="0.15" y1="0" x2="0.85" y2="1">
+          <stop offset="0" stopColor="#9E1B2A" />
+          <stop offset="0.55" stopColor="#6E0E19" />
+          <stop offset="1" stopColor="#33060B" />
+        </linearGradient>
+        <radialGradient id="gorroPelo" cx="0.38" cy="0.3" r="0.8">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="0.6" stopColor="#F2F0EC" />
+          <stop offset="1" stopColor="#C9C5BE" />
+        </radialGradient>
+      </defs>
+      <path d="M9 64 C11 40 24 18 48 10 C62 6 77 10 85 22 C91 31 92 42 89 53 C85 45 79 37 71 33 C63 30 57 40 55 64 Z" fill="url(#gorroTela)" />
+      <path d="M47 12 C40 28 37 46 35 63" stroke="#33060B" strokeWidth="5" fill="none" opacity="0.35" strokeLinecap="round" />
+      <path d="M71 33 C78 36 84 43 88 51" stroke="#33060B" strokeWidth="4" fill="none" opacity="0.4" strokeLinecap="round" />
+      <path d="M24 34 C30 23 40 16 54 12" stroke="#FFFFFF" strokeWidth="2.2" fill="none" opacity="0.22" strokeLinecap="round" />
+      <rect x="4" y="58" width="56" height="15" rx="7.5" fill="url(#gorroPelo)" />
+      {borde.map((x, i) => <circle key={x} cx={x + 2} cy={i % 2 ? 61 : 70} r="5.2" fill="url(#gorroPelo)" />)}
+      {borde.map((x, i) => <circle key={"b" + x} cx={x + 5} cy={i % 2 ? 69 : 62} r="4.6" fill="url(#gorroPelo)" />)}
+      {[[89, 57, 8], [84, 60, 5.5], [94, 61, 5.5], [89, 64, 6], [86, 53, 5], [93, 53, 5]].map(([cx, cy, r], i) => <circle key={"p" + i} cx={cx} cy={cy} r={r} fill="url(#gorroPelo)" />)}
+    </svg>
+  );
+}
+
 /* ===================== INICIO ===================== */
 
 function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed }) {
@@ -1464,6 +1508,7 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
   // El reparto se hace una vez sobre la lista entera, no servicio a servicio:
   // es lo único que garantiza que no se repita ninguna foto.
   const fotos = useMemo(() => repartirFotos(services), [services]);
+  const navidad = esNavidad();
   return (
     <div>
       <div style={{ position: "relative", padding: "78px 20px 40px", textAlign: "center", overflow: "hidden", minHeight: 420 }}>
@@ -1471,7 +1516,17 @@ function Inicio({ services, onReservar, schedule, onContacto, loaded, loadFailed
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,11,10,0.62) 0%, rgba(11,11,10,0.80) 55%, #0B0B0A 100%)" }} />
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 15%, rgba(201,162,39,0.18), transparent 60%)" }} />
         <div style={{ position: "relative" }} className="fade-in">
-          <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", margin: "0 auto 22px", display: "block" }} />
+          <div style={{ position: "relative", width: 220, margin: "0 auto 22px" }}>
+            <img src={LOGO_B64} alt="Félix Barbería" style={{ width: 220, height: "auto", objectFit: "contain", display: "block" }} />
+            {navidad && <Gorro />}
+          </div>
+          {navidad && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 28, height: 1, background: GOLD }} />
+              <span className="display" style={{ color: GOLD_LIGHT, fontStyle: "italic", fontSize: 19, fontWeight: 600 }}>Felices fiestas</span>
+              <span style={{ width: 28, height: 1, background: GOLD }} />
+            </div>
+          )}
           <h1 className="display" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px", textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>Reserva tu cita</h1>
           <p style={{ color: GOLD, fontWeight: 600, fontSize: 14, marginBottom: 22 }}>Rápido, fácil y desde WhatsApp</p>
           <button onClick={() => onReservar(null)} className="gold-btn" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 999, fontWeight: 700, fontSize: 14, cursor: "pointer", letterSpacing: 0.5 }}>
